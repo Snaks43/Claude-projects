@@ -1,0 +1,365 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#0b1020">
+<title>Idle Bastion</title>
+<style>
+  :root{--bg:#0b1020;--panel:#141b33;--btn:#1d2748;--btn2:#26335e;--text:#e8ecff;--dim:#8d97c4;--gold:#ffd24a;--hp:#4be08a;--bad:#ff5a6a}
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;user-select:none;-webkit-user-select:none;touch-action:manipulation}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;overflow:hidden;overscroll-behavior:none}
+  #app{display:flex;flex-direction:column;height:100%;padding-top:env(safe-area-inset-top)}
+  #hud{display:flex;justify-content:space-between;align-items:center;padding:8px 14px;font-weight:700;font-size:15px;gap:8px}
+  #hud .gold{color:var(--gold);font-size:18px}
+  #hud .dim{color:var(--dim);font-weight:600;font-size:13px}
+  #stage{position:relative;flex:1 1 auto;min-height:0}
+  canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
+  #msg{position:absolute;left:0;right:0;top:18%;text-align:center;font-size:22px;font-weight:800;pointer-events:none;opacity:0;transition:opacity .4s;text-shadow:0 2px 8px #000}
+  #panel{flex:0 0 auto;height:40%;max-height:340px;background:var(--panel);border-top:2px solid #2a3566;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:8px 8px calc(8px + env(safe-area-inset-bottom));display:grid;grid-template-columns:1fr 1fr;gap:8px;align-content:start}
+  .up{background:var(--btn);border:0;border-radius:12px;color:var(--text);padding:10px;text-align:left;font:inherit;display:flex;flex-direction:column;gap:2px;min-height:68px}
+  .up:active{background:var(--btn2)}
+  .up .n{font-weight:700;font-size:14px;display:flex;justify-content:space-between}
+  .up .n b{color:var(--dim);font-size:12px}
+  .up .d{font-size:12px;color:var(--dim)}
+  .up .c{margin-top:auto;font-weight:800;color:var(--gold);font-size:14px}
+  .up.no{opacity:.5}
+  .up.max .c{color:var(--hp)}
+  #foot{grid-column:1/-1;text-align:center;color:var(--dim);font-size:11px;padding:4px}
+  #foot a{color:var(--dim)}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="hud">
+    <div><div class="gold" id="gold">0</div><div class="dim" id="gps"></div></div>
+    <div style="text-align:center"><div id="wave">Wave 1</div><div class="dim" id="best"></div></div>
+    <div style="text-align:right"><div id="hptxt">100</div><div class="dim">Tower HP</div></div>
+  </div>
+  <div id="stage"><canvas id="c"></canvas><div id="msg"></div></div>
+  <div id="panel"></div>
+</div>
+<script>
+"use strict";
+// ---------- Upgrades ----------
+const fmt = n => {
+  if (n < 1000) return n < 10 && n % 1 ? n.toFixed(1) : Math.floor(n).toString();
+  const s = ["", "K", "M", "B", "T", "Qa", "Qi"]; let i = 0;
+  while (n >= 1000 && i < s.length - 1) { n /= 1000; i++; }
+  return n.toFixed(n < 10 ? 2 : n < 100 ? 1 : 0) + s[i];
+};
+const UPG = {
+  dmg:   {name:"Damage",     base:10,  g:1.16, val:l=>4*Math.pow(1.2,l),           txt:v=>fmt(v)+" dmg"},
+  rate:  {name:"Fire Rate",  base:25,  g:1.18, val:l=>1+0.12*l,                     txt:v=>v.toFixed(1)+" shots/s"},
+  range: {name:"Range",      base:20,  g:1.2,  val:l=>120+8*l,        max:30,        txt:v=>Math.round(v)+" px"},
+  multi: {name:"Multishot",  base:200, g:2.2,  val:l=>1+l,            max:7,         txt:v=>v+" targets"},
+  crit:  {name:"Crit Chance",base:50,  g:1.25, val:l=>0.05+0.01*l,   max:45,        txt:v=>Math.round(v*100)+"% (x2.5)"},
+  hp:    {name:"Max HP",     base:15,  g:1.18, val:l=>100*Math.pow(1.2,l),          txt:v=>fmt(v)+" HP"},
+  regen: {name:"Regen",      base:30,  g:1.2,  val:l=>l*(1+l*0.15),                 txt:v=>v.toFixed(1)+" HP/s"},
+  gold:  {name:"Gold Bonus", base:40,  g:1.25, val:l=>1+0.12*l,                     txt:v=>"x"+v.toFixed(2)},
+};
+const cost = k => Math.floor(UPG[k].base * Math.pow(UPG[k].g, S.lv[k]));
+const stat = k => UPG[k].val(S.lv[k]);
+
+// ---------- Enemy types ----------
+// minWave: first appearance, w: spawn weight, rng: stops at this distance and shoots
+const TYPES = {
+  grunt:    {hp:10, spd:40, dmg:5,  gold:2,   r:10, col:"#7bd36b", minWave:1,  w:10, shape:"circle"},
+  runner:   {hp:6,  spd:95, dmg:3,  gold:2,   r:8,  col:"#4fc3ff", minWave:3,  w:6,  shape:"tri"},
+  tank:     {hp:70, spd:22, dmg:16, gold:10,  r:17, col:"#b0793c", minWave:5,  w:3,  shape:"square"},
+  swarm:    {hp:3,  spd:60, dmg:1,  gold:0.7, r:5,  col:"#e6e66a", minWave:7,  w:3,  shape:"circle", group:7},
+  splitter: {hp:35, spd:34, dmg:6,  gold:5,   r:13, col:"#c46bff", minWave:9,  w:3,  shape:"diamond", split:3},
+  shooter:  {hp:22, spd:36, dmg:8,  gold:7,   r:11, col:"#ff8a4f", minWave:11, w:3,  shape:"hex", rng:150},
+  boss:     {hp:450,spd:18, dmg:40, gold:120, r:30, col:"#ff4a6a", minWave:10, w:0,  shape:"star"},
+};
+
+// ---------- State ----------
+const SAVE_KEY = "idleBastion.v1";
+let S = {gold:0, lv:{dmg:0,rate:0,range:0,multi:0,crit:0,hp:0,regen:0,gold:0}, wave:1, best:1, gpsAvg:0, t:Date.now(), kills:0};
+try { const d = JSON.parse(localStorage.getItem(SAVE_KEY)); if (d) { S = Object.assign(S, d); S.lv = Object.assign({dmg:0,rate:0,range:0,multi:0,crit:0,hp:0,regen:0,gold:0}, d.lv); } } catch(e){}
+
+let enemies = [], bullets = [], eshots = [], parts = [], floats = [];
+let hp = stat("hp"), cd = 0, spawnT = 0, waveT = 0, W = 300, H = 300, dpr = 1, cx = 150, cy = 150;
+let goldWindow = [], msgT = 0;
+
+// offline progress
+(function offline(){
+  const away = Math.min((Date.now() - S.t) / 1000, 7200);
+  if (away > 60 && S.gpsAvg > 0) {
+    const g = Math.floor(S.gpsAvg * away * 0.5);
+    S.gold += g;
+    setTimeout(() => showMsg("Welcome back! +" + fmt(g) + " gold", "var(--gold)"), 300);
+  }
+})();
+
+// ---------- UI ----------
+const $ = id => document.getElementById(id);
+const panel = $("panel"), btns = {};
+for (const k in UPG) {
+  const b = document.createElement("button");
+  b.className = "up";
+  b.innerHTML = '<div class="n"><span></span><b></b></div><div class="d"></div><div class="c"></div>';
+  b.onclick = () => buy(k);
+  panel.appendChild(b); btns[k] = b;
+}
+const foot = document.createElement("div");
+foot.id = "foot"; foot.innerHTML = 'Tap enemies for bonus damage · <a href="#" id="reset">Reset save</a>';
+panel.appendChild(foot);
+$("reset").onclick = e => { e.preventDefault(); if (confirm("Erase all progress?")) { localStorage.removeItem(SAVE_KEY); S = null; location.reload(); } };
+
+function buy(k) {
+  const u = UPG[k];
+  if (u.max && S.lv[k] >= u.max) return;
+  const c = cost(k);
+  if (S.gold < c) return;
+  S.gold -= c; S.lv[k]++;
+  if (k === "hp") hp = Math.min(stat("hp"), hp + stat("hp") - UPG.hp.val(S.lv.hp - 1));
+  refreshUI();
+}
+function refreshUI() {
+  for (const k in UPG) {
+    const u = UPG[k], b = btns[k], maxed = u.max && S.lv[k] >= u.max;
+    b.querySelector("span").textContent = u.name;
+    b.querySelector("b").textContent = "Lv " + S.lv[k] + (u.max ? "/" + u.max : "");
+    b.querySelector(".d").textContent = u.txt(stat(k)) + (maxed ? "" : " → " + u.txt(u.val(S.lv[k] + 1)));
+    b.querySelector(".c").textContent = maxed ? "MAX" : "⛁ " + fmt(cost(k));
+    b.classList.toggle("max", !!maxed);
+    b.classList.toggle("no", !maxed && S.gold < cost(k));
+  }
+  $("gold").textContent = "⛁ " + fmt(S.gold);
+  $("wave").textContent = "Wave " + S.wave;
+  $("best").textContent = "Best " + S.best;
+  $("hptxt").textContent = fmt(Math.max(0, hp)) + " / " + fmt(stat("hp"));
+  $("hptxt").style.color = hp / stat("hp") < 0.3 ? "var(--bad)" : "var(--hp)";
+  const now = Date.now();
+  goldWindow = goldWindow.filter(x => now - x[0] < 15000);
+  const gps = goldWindow.reduce((a, x) => a + x[1], 0) / 15;
+  if (goldWindow.length) S.gpsAvg = S.gpsAvg ? S.gpsAvg * 0.9 + gps * 0.1 : gps;
+  $("gps").textContent = "+" + fmt(gps) + "/s";
+}
+function showMsg(t, col) {
+  const m = $("msg"); m.textContent = t; m.style.color = col || "#fff"; m.style.opacity = 1; msgT = 2.2;
+}
+
+// ---------- Canvas ----------
+const cv = $("c"), ctx = cv.getContext("2d");
+function resize() {
+  const r = cv.getBoundingClientRect();
+  dpr = Math.min(window.devicePixelRatio || 1, 2);
+  W = r.width; H = r.height; cx = W / 2; cy = H / 2;
+  cv.width = W * dpr; cv.height = H * dpr;
+}
+addEventListener("resize", resize); resize();
+
+cv.addEventListener("pointerdown", e => {
+  const r = cv.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top;
+  let best = null, bd = 40 * 40;
+  for (const en of enemies) {
+    const d = (en.x - x) ** 2 + (en.y - y) ** 2;
+    if (d < bd + en.r * en.r) { bd = d; best = en; }
+  }
+  if (best) { hit(best, stat("dmg") * 2, true); burst(x, y, "#fff", 4); }
+});
+
+// ---------- Game logic ----------
+function scale(wave) {
+  return {hp: Math.pow(1.13, wave - 1), dmg: Math.pow(1.08, wave - 1), spd: Math.min(2, 1 + 0.012 * (wave - 1)), gold: Math.pow(1.1, wave - 1)};
+}
+function spawn(type, x, y) {
+  const t = TYPES[type], sc = scale(S.wave);
+  if (x === undefined) {
+    const a = Math.random() * Math.PI * 2, d = Math.hypot(W, H) / 2 + 20;
+    x = cx + Math.cos(a) * d; y = cy + Math.sin(a) * d;
+  }
+  const hpv = t.hp * sc.hp * (type === "boss" ? 1 : 1);
+  enemies.push({type, x, y, hp: hpv, max: hpv, spd: t.spd * sc.spd * (0.9 + Math.random() * 0.2), dmg: t.dmg * sc.dmg,
+    gold: t.gold * sc.gold, r: t.r, col: t.col, shape: t.shape, split: t.split, rng: t.rng, cd: 1 + Math.random(), flash: 0, ph: Math.random() * 6});
+}
+function pickType() {
+  const pool = Object.entries(TYPES).filter(([k, t]) => t.w > 0 && S.wave >= t.minWave);
+  let tot = pool.reduce((a, [, t]) => a + t.w, 0), r = Math.random() * tot;
+  for (const [k, t] of pool) { if ((r -= t.w) <= 0) return k; }
+  return "grunt";
+}
+function spawnTick() {
+  if (S.wave % 10 === 0 && spawnTick.bossWave !== S.wave) {
+    spawnTick.bossWave = S.wave; spawn("boss"); showMsg("⚠ BOSS WAVE", "var(--bad)");
+  }
+  const k = pickType(), t = TYPES[k];
+  if (t.group) {
+    const a = Math.random() * Math.PI * 2, d = Math.hypot(W, H) / 2 + 20;
+    for (let i = 0; i < t.group; i++) spawn(k, cx + Math.cos(a + (Math.random() - .5) * .3) * (d + Math.random() * 30), cy + Math.sin(a + (Math.random() - .5) * .3) * (d + Math.random() * 30));
+  } else spawn(k);
+}
+function burst(x, y, col, n) {
+  for (let i = 0; i < n; i++) { const a = Math.random() * 6.28, s = 30 + Math.random() * 80; parts.push({x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, l: .4, col}); }
+}
+function hit(en, dmg, tap) {
+  if (en.dead) return;
+  en.hp -= dmg; en.flash = .08;
+  floats.push({x: en.x, y: en.y - en.r, t: .6, s: fmt(dmg), c: tap ? "#fff" : "#ffd24a"});
+  if (en.hp <= 0) kill(en);
+}
+function kill(en) {
+  en.dead = true;
+  const g = en.gold * stat("gold");
+  S.gold += g; S.kills++; goldWindow.push([Date.now(), g]);
+  burst(en.x, en.y, en.col, en.type === "boss" ? 30 : 8);
+  if (en.split) for (let i = 0; i < en.split; i++) {
+    spawn("swarm", en.x + (Math.random() - .5) * 20, en.y + (Math.random() - .5) * 20);
+    const m = enemies[enemies.length - 1]; m.hp = m.max = en.max * 0.2; m.gold = en.gold * 0.15; m.dmg = en.dmg * 0.5; m.r = 7; m.col = en.col;
+  }
+}
+function damageTower(d) {
+  hp -= d;
+  if (hp <= 0) {
+    hp = stat("hp");
+    S.wave = Math.max(1, S.wave - 3); waveT = 0;
+    enemies = []; eshots = []; bullets = [];
+    showMsg("Tower fell! Back to wave " + S.wave, "var(--bad)");
+  }
+}
+
+function update(dt) {
+  // wave progression: strictly time based so the difficulty always ramps
+  waveT += dt;
+  if (waveT >= 25) { waveT = 0; S.wave++; if (S.wave > S.best) S.best = S.wave; showMsg("Wave " + S.wave); }
+  spawnT -= dt;
+  if (spawnT <= 0) { spawnTick(); spawnT = Math.max(0.3, 1.4 * Math.pow(0.97, S.wave)); }
+
+  hp = Math.min(stat("hp"), hp + stat("regen") * dt);
+
+  // tower fire
+  cd -= dt;
+  const range = stat("range");
+  if (cd <= 0) {
+    const inR = enemies.filter(e => !e.dead && Math.hypot(e.x - cx, e.y - cy) - e.r <= range)
+      .sort((a, b) => Math.hypot(a.x - cx, a.y - cy) - Math.hypot(b.x - cx, b.y - cy));
+    const n = Math.min(stat("multi"), inR.length);
+    if (n) {
+      for (let i = 0; i < n; i++) bullets.push({x: cx, y: cy, tgt: inR[i]});
+      cd = 1 / stat("rate");
+    } else cd = 0;
+  }
+  for (const b of bullets) {
+    const t = b.tgt;
+    if (t.dead) { b.gone = true; continue; }
+    const dx = t.x - b.x, dy = t.y - b.y, d = Math.hypot(dx, dy), step = 520 * dt;
+    if (d <= step + t.r) {
+      b.gone = true;
+      const crit = Math.random() < stat("crit");
+      hit(t, stat("dmg") * (crit ? 2.5 : 1) * (0.9 + Math.random() * 0.2), false);
+    } else { b.x += dx / d * step; b.y += dy / d * step; }
+  }
+  bullets = bullets.filter(b => !b.gone);
+
+  // enemies
+  for (const e of enemies) {
+    if (e.dead) continue;
+    e.flash -= dt; e.ph += dt * 6;
+    const dx = cx - e.x, dy = cy - e.y, d = Math.hypot(dx, dy), stopAt = e.rng || 26;
+    if (d > stopAt) { e.x += dx / d * e.spd * dt; e.y += dy / d * e.spd * dt; }
+    else {
+      e.cd -= dt;
+      if (e.cd <= 0) {
+        if (e.rng) { eshots.push({x: e.x, y: e.y, d: e.dmg}); e.cd = 2; }
+        else { damageTower(e.dmg); e.cd = 0.8; burst(cx - dx / d * 20, cy - dy / d * 20, "#ff5a6a", 3); }
+      }
+    }
+  }
+  enemies = enemies.filter(e => !e.dead);
+  for (const s of eshots) {
+    const dx = cx - s.x, dy = cy - s.y, d = Math.hypot(dx, dy);
+    if (d < 20) { s.gone = true; damageTower(s.d); } else { s.x += dx / d * 220 * dt; s.y += dy / d * 220 * dt; }
+  }
+  eshots = eshots.filter(s => !s.gone);
+
+  for (const p of parts) { p.x += p.vx * dt; p.y += p.vy * dt; p.l -= dt; }
+  parts = parts.filter(p => p.l > 0);
+  for (const f of floats) { f.y -= 30 * dt; f.t -= dt; }
+  floats = floats.filter(f => f.t > 0);
+  if (msgT > 0 && (msgT -= dt) <= 0) $("msg").style.opacity = 0;
+}
+
+// ---------- Drawing ----------
+function poly(n, r, rot) {
+  ctx.beginPath();
+  for (let i = 0; i < n; i++) { const a = rot + i * 6.2832 / n; ctx[i ? "lineTo" : "moveTo"](Math.cos(a) * r, Math.sin(a) * r); }
+  ctx.closePath();
+}
+function drawEnemy(e) {
+  ctx.save(); ctx.translate(e.x, e.y);
+  ctx.fillStyle = e.flash > 0 ? "#fff" : e.col;
+  ctx.strokeStyle = "rgba(0,0,0,.45)"; ctx.lineWidth = 2;
+  const r = e.r, ang = Math.atan2(cy - e.y, cx - e.x);
+  switch (e.shape) {
+    case "tri": poly(3, r * 1.2, ang); break;
+    case "square": poly(4, r * 1.3, Math.PI / 4); break;
+    case "diamond": poly(4, r * 1.3, 0); break;
+    case "hex": poly(6, r * 1.1, e.ph * 0.05); break;
+    case "star": ctx.beginPath(); for (let i = 0; i < 16; i++) { const rr = i % 2 ? r * .65 : r * 1.15, a = e.ph * .03 + i * Math.PI / 8; ctx[i ? "lineTo" : "moveTo"](Math.cos(a) * rr, Math.sin(a) * rr); } ctx.closePath(); break;
+    default: ctx.beginPath(); ctx.arc(0, 0, r + Math.sin(e.ph) * .6, 0, 6.2832);
+  }
+  ctx.fill(); ctx.stroke();
+  if (e.hp < e.max) {
+    ctx.fillStyle = "#000a"; ctx.fillRect(-r, -r - 9, r * 2, 4);
+    ctx.fillStyle = "#ff5a6a"; ctx.fillRect(-r, -r - 9, r * 2 * Math.max(0, e.hp / e.max), 4);
+  }
+  ctx.restore();
+}
+function draw() {
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, W, H);
+  const g = ctx.createRadialGradient(cx, cy, 10, cx, cy, Math.max(W, H) * .7);
+  g.addColorStop(0, "#18224a"); g.addColorStop(1, "#080c1a");
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+
+  const range = stat("range");
+  ctx.beginPath(); ctx.arc(cx, cy, range, 0, 6.2832);
+  ctx.fillStyle = "rgba(90,140,255,.07)"; ctx.fill();
+  ctx.strokeStyle = "rgba(120,170,255,.35)"; ctx.setLineDash([6, 6]); ctx.lineWidth = 1.5; ctx.stroke(); ctx.setLineDash([]);
+
+  // tower
+  const t = performance.now() / 1000;
+  ctx.save(); ctx.translate(cx, cy);
+  ctx.shadowColor = "#5aa0ff"; ctx.shadowBlur = 20;
+  ctx.fillStyle = "#3a5bd9"; poly(6, 22, t * .2); ctx.fill();
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = "#8fb4ff"; poly(6, 13, -t * .4); ctx.fill();
+  ctx.fillStyle = "#fff"; ctx.beginPath(); ctx.arc(0, 0, 5, 0, 6.2832); ctx.fill();
+  const frac = Math.max(0, hp / stat("hp"));
+  ctx.fillStyle = "#000a"; ctx.fillRect(-28, 30, 56, 6);
+  ctx.fillStyle = frac < .3 ? "#ff5a6a" : "#4be08a"; ctx.fillRect(-28, 30, 56 * frac, 6);
+  ctx.restore();
+
+  enemies.forEach(drawEnemy);
+  ctx.fillStyle = "#ffe98a";
+  for (const b of bullets) { ctx.beginPath(); ctx.arc(b.x, b.y, 3, 0, 6.2832); ctx.fill(); }
+  ctx.fillStyle = "#ff8a4f";
+  for (const s of eshots) { ctx.beginPath(); ctx.arc(s.x, s.y, 4, 0, 6.2832); ctx.fill(); }
+  for (const p of parts) { ctx.globalAlpha = Math.max(0, p.l / .4); ctx.fillStyle = p.col; ctx.fillRect(p.x - 2, p.y - 2, 4, 4); }
+  ctx.globalAlpha = 1;
+  ctx.font = "bold 12px system-ui"; ctx.textAlign = "center";
+  for (const f of floats) { ctx.globalAlpha = Math.min(1, f.t * 2); ctx.fillStyle = f.c; ctx.fillText(f.s, f.x, f.y); }
+  ctx.globalAlpha = 1;
+}
+
+// ---------- Loop ----------
+let last = performance.now(), uiT = 0, saveT = 0;
+function frame(now) {
+  const dt = Math.min((now - last) / 1000, 0.1); last = now;
+  update(dt); draw();
+  uiT -= dt; if (uiT <= 0) { refreshUI(); uiT = 0.2; }
+  saveT += dt; if (saveT > 5) { save(); saveT = 0; }
+  requestAnimationFrame(frame);
+}
+function save() { if (!S) return; S.t = Date.now(); try { localStorage.setItem(SAVE_KEY, JSON.stringify(S)); } catch(e){} }
+document.addEventListener("visibilitychange", () => { if (document.hidden) save(); else last = performance.now(); });
+addEventListener("pagehide", save);
+refreshUI();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
