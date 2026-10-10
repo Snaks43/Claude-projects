@@ -1,0 +1,776 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#0c0e18">
+<title>Delvebound</title>
+<style>
+  :root{color-scheme:dark;--bg:#0c0e18;--panel:#151827;--panel2:#1d2135;--line:#2a2f4a;--text:#e9e6f2;--dim:#8e92b0;--gold:#ffc94a;--hp:#e5484d;--good:#5be37d}
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;user-select:none;-webkit-user-select:none;touch-action:manipulation}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;overflow:hidden;overscroll-behavior:none}
+  #app{display:flex;flex-direction:column;height:100%}
+  #hud{display:flex;justify-content:space-between;align-items:center;padding:6px 12px;gap:8px;font-weight:700}
+  #hud .big{font-size:16px}
+  #hud .dim{font-size:12px;color:var(--dim);font-weight:600}
+  #gold{color:var(--gold)}
+  #spd{background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:6px 10px;font:inherit;font-size:13px;min-width:44px}
+  #hpbar{position:relative;height:16px;margin:0 12px 6px;background:#2a1217;border-radius:8px;overflow:hidden;border:1px solid #4a1f27}
+  #hpbar i{position:absolute;inset:0;width:100%;background:linear-gradient(#ef5a5f,#b92d34);transition:width .15s}
+  #hpbar span{position:absolute;inset:0;text-align:center;font-size:11px;line-height:16px;font-weight:700;text-shadow:0 1px 2px #000}
+  #stage{position:relative;flex:1 1 auto;min-height:0;overflow:hidden}
+  canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
+  #log{position:absolute;left:8px;bottom:6px;right:8px;display:flex;flex-direction:column;gap:2px;pointer-events:none}
+  #log div{font-size:12px;font-weight:700;text-shadow:0 1px 3px #000,0 0 6px #000;animation:fade 6s forwards}
+  @keyframes fade{0%,70%{opacity:1}100%{opacity:0}}
+  #tabs{display:flex;background:var(--panel);border-top:1px solid var(--line)}
+  #tabs button{flex:1;background:none;border:0;color:var(--dim);font:inherit;font-size:13px;font-weight:700;padding:11px 0;border-bottom:3px solid transparent}
+  #tabs button.on{color:var(--gold);border-bottom-color:var(--gold)}
+  #panel{flex:0 0 auto;height:38%;max-height:320px;background:var(--panel);overflow-y:auto;-webkit-overflow-scrolling:touch;padding:8px 10px}
+  .stats{display:grid;grid-template-columns:repeat(3,1fr);gap:4px 8px;font-size:12px;margin-bottom:8px}
+  .stats div{color:var(--dim)} .stats b{color:var(--text);float:right}
+  .row{display:flex;align-items:center;gap:8px;background:var(--panel2);border-radius:10px;padding:7px 9px;margin-bottom:6px;min-height:46px}
+  .row .sl{width:54px;font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.06em;flex:none}
+  .row .nm{flex:1;min-width:0;font-size:13px;font-weight:700;line-height:1.25}
+  .row .nm small{display:block;font-weight:500;color:var(--dim);font-size:11px}
+  .row button,.tg{background:#2c3354;border:1px solid var(--line);color:var(--text);border-radius:8px;padding:7px 10px;font:inherit;font-size:12px;font-weight:700;flex:none}
+  .row button:active,.tg:active{background:#3a4470}
+  .row button.sell{color:var(--gold)}
+  .row button.dis{opacity:.45}
+  .bar{display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap}
+  .tg.on{background:#2f5a3c;border-color:#4a8a5c}
+  .empty{color:var(--dim);text-align:center;padding:18px 8px;font-size:13px}
+  .foot{text-align:center;font-size:11px;color:var(--dim);padding:6px}
+  .foot a{color:var(--dim)}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="hud">
+    <div><div class="big" id="floor">Floor 1</div><div class="dim" id="foes"></div></div>
+    <div style="text-align:center"><div class="big" id="gold">0</div><div class="dim" id="gps"></div></div>
+    <button id="spd">1x</button>
+  </div>
+  <div id="hpbar"><i id="hpfill"></i><span id="hptxt"></span></div>
+  <div id="stage"><canvas id="c"></canvas><div id="log"></div></div>
+  <div id="tabs"></div>
+  <div id="panel"></div>
+</div>
+<script>
+"use strict";
+// ================= helpers =================
+const ri = (a, b) => a + Math.floor(Math.random() * (b - a + 1));
+const rf = (a, b) => a + Math.random() * (b - a);
+const pick = a => a[Math.floor(Math.random() * a.length)];
+const fmt = n => {
+  if (n < 1000) return n < 10 && n % 1 ? n.toFixed(1) : String(Math.floor(n));
+  const s = ["", "K", "M", "B", "T", "Qa"]; let i = 0;
+  while (n >= 1000 && i < s.length - 1) { n /= 1000; i++; }
+  return n.toFixed(n < 10 ? 2 : n < 100 ? 1 : 0) + s[i];
+};
+const $ = id => document.getElementById(id);
+
+// ================= data =================
+const MW = 46, MH = 34, BAG = 24, K4 = [[1,0],[-1,0],[0,1],[0,-1]];
+const RAR = [
+  {n: "Common",    c: "#b8c0d4", m: 1},
+  {n: "Uncommon",  c: "#5be37d", m: 1.25},
+  {n: "Rare",      c: "#4aa8ff", m: 1.6},
+  {n: "Epic",      c: "#b86bff", m: 2.1},
+  {n: "Legendary", c: "#ffb23d", m: 3},
+];
+const SLOTS = ["weapon", "helm", "armor", "boots", "ring", "amulet"];
+const SLOT_NAME = {weapon: "Weapon", helm: "Helm", armor: "Armour", boots: "Boots", ring: "Ring", amulet: "Amulet"};
+const WT = {
+  sword:  {nm: "Sword",  rng: 1.25, as: 1.0, am: 1.0, ranged: false},
+  dagger: {nm: "Dagger", rng: 1.1,  as: 1.6, am: 0.6, ranged: false},
+  axe:    {nm: "Axe",    rng: 1.25, as: 0.7, am: 1.6, ranged: false},
+  bow:    {nm: "Bow",    rng: 4.5,  as: 0.9, am: 0.9, ranged: true},
+  staff:  {nm: "Staff",  rng: 4.0,  as: 0.8, am: 1.3, ranged: true},
+};
+const BASES = {
+  helm: ["Cap", "Helm", "Hood", "Crown"], armor: ["Tunic", "Mail", "Plate", "Robe"],
+  boots: ["Boots", "Greaves", "Sandals"], ring: ["Ring", "Band", "Signet"], amulet: ["Amulet", "Charm", "Pendant"],
+};
+const PRE = ["", "Sturdy", "Fine", "Runed", "Mythic"];
+const SUF = ["of the Wolf", "of Embers", "of the Deep", "of Storms", "of the Fallen", "of Thorns"];
+const STAT_LBL = {atk: "ATK", def: "DEF", hp: "HP", crit: "CRIT%", aspd: "SPD%", regen: "REGEN"};
+
+// parts: [name, value, chance]
+const TYPES = [
+  {id: "slime",    name: "Slime",     minF: 1,  w: 10, hp: 1.0, atk: 0.7, spd: 1.6, g: 0.8, r: 0.38, col: "#5be37d", shape: "slime",    ai: 1.3, parts: [["Slime Gel", 1, .5]]},
+  {id: "rat",      name: "Giant Rat", minF: 1,  w: 10, hp: 0.6, atk: 0.8, spd: 3.2, g: 0.7, r: 0.30, col: "#a0907c", shape: "rat",      ai: 0.8, parts: [["Rat Tail", 1, .4], ["Rat Fang", 1.5, .25]]},
+  {id: "bat",      name: "Cave Bat",  minF: 2,  w: 8,  hp: 0.5, atk: 0.9, spd: 3.6, g: 0.9, r: 0.30, col: "#8b6bd0", shape: "bat",      ai: 1.0, parts: [["Bat Wing", 1.5, .4], ["Bat Fang", 2, .2]]},
+  {id: "goblin",   name: "Goblin",    minF: 2,  w: 8,  hp: 1.1, atk: 1.1, spd: 2.4, g: 1.2, r: 0.36, col: "#78b848", shape: "goblin",   ai: 1.1, parts: [["Goblin Ear", 1.5, .4], ["Goblin Tooth", 2, .2]]},
+  {id: "skeleton", name: "Skeleton",  minF: 3,  w: 8,  hp: 1.3, atk: 1.2, spd: 2.0, g: 1.5, r: 0.38, col: "#e6e2d3", shape: "skel",     ai: 1.2, parts: [["Bone", 1.5, .5], ["Skull", 3, .15]]},
+  {id: "wolf",     name: "Dire Wolf", minF: 4,  w: 8,  hp: 1.4, atk: 1.5, spd: 3.4, g: 1.8, r: 0.42, col: "#8e96a8", shape: "wolf",     ai: 0.9, parts: [["Wolf Fang", 3, .35], ["Wolf Claw", 3, .3], ["Wolf Pelt", 4, .2]]},
+  {id: "spider",   name: "Spider",    minF: 5,  w: 7,  hp: 1.0, atk: 1.3, spd: 2.8, g: 2.0, r: 0.38, col: "#4a3a52", shape: "spider",   ai: 1.4, ranged: true, rng: 4, parts: [["Spider Fang", 3.5, .3], ["Silk Gland", 4, .25], ["Spider Eye", 6, .1]]},
+  {id: "cultist",  name: "Cultist",   minF: 6,  w: 7,  hp: 0.9, atk: 2.0, spd: 1.8, g: 2.6, r: 0.36, col: "#a04fc9", shape: "mage",     ai: 1.8, ranged: true, rng: 5, parts: [["Arcane Dust", 4, .4], ["Cursed Eye", 7, .12]]},
+  {id: "orc",      name: "Orc",       minF: 7,  w: 7,  hp: 3.0, atk: 1.8, spd: 1.9, g: 3.5, r: 0.50, col: "#4f8a3c", shape: "orc",      ai: 1.5, parts: [["Orc Tusk", 5, .35], ["Orc Hide", 6, .25], ["Iron Scrap", 4, .3]]},
+  {id: "golem",    name: "Golem",     minF: 9,  w: 6,  hp: 5.0, atk: 2.2, spd: 1.2, g: 5.0, r: 0.55, col: "#8a8478", shape: "golem",    ai: 2.0, parts: [["Stone Core", 10, .2], ["Rubble", 2, .5]]},
+  {id: "wraith",   name: "Wraith",    minF: 10, w: 6,  hp: 1.8, atk: 2.5, spd: 2.6, g: 6.0, r: 0.40, col: "#6fb7e8", shape: "wraith",   ai: 1.2, parts: [["Ectoplasm", 8, .35], ["Soul Shard", 14, .1]]},
+];
+const MIMIC = {id: "mimic", name: "Mimic", hp: 6, atk: 1.8, spd: 3.0, g: 5, r: 0.5, col: "#b07a3a", shape: "mimic", ai: 1.0, parts: [["Mimic Tongue", 12, 1]]};
+const BOSSES = [
+  ["Slime King", "#5be37d"], ["Goblin Chieftain", "#78b848"], ["Bone Lord", "#e6e2d3"], ["Fenrir the Alpha", "#8e96a8"],
+  ["Broodmother", "#7a4a8a"], ["Orc Warlord", "#4f8a3c"], ["Archlich Veth", "#a04fc9"], ["Stone Colossus", "#8a8478"],
+  ["Wraith Sovereign", "#6fb7e8"], ["Ancient Dragon", "#e5484d"],
+];
+const TRAIN = {
+  vit:   {n: "Vitality",  d: l => "+" + l * 10 + "% max HP",       base: 30,  g: 1.28},
+  str:   {n: "Strength",  d: l => "+" + l * 10 + "% attack",       base: 40,  g: 1.28},
+  tough: {n: "Toughness", d: l => "+" + l * 3 + " defence",        base: 35,  g: 1.28},
+  swift: {n: "Swiftness", d: l => "+" + l * 2 + "% attack speed",  base: 60,  g: 1.3, max: 50},
+  fort:  {n: "Fortune",   d: l => "+" + l * 8 + "% gold",          base: 80,  g: 1.32},
+  luck:  {n: "Scavenger", d: l => "+" + l * 4 + "% drop chance",   base: 100, g: 1.32},
+};
+
+// ================= state =================
+const SAVE_KEY = "delvebound.v1";
+let S = {gold: 0, floor: 1, best: 1, kills: 0, eq: {}, bag: [], parts: {}, tr: {vit: 0, str: 0, tough: 0, swift: 0, fort: 0, luck: 0},
+         autoJunk: true, autoParts: false, gpsAvg: 0, t: Date.now(), speed: 1, nid: 1};
+try {
+  const d = JSON.parse(localStorage.getItem(SAVE_KEY));
+  if (d) { S = Object.assign(S, d); S.tr = Object.assign({vit: 0, str: 0, tough: 0, swift: 0, fort: 0, luck: 0}, d.tr); }
+} catch (e) {}
+
+let grid, rooms, seen = new Uint8Array(MW * MH), vis = new Uint8Array(MW * MH);
+let mons = [], projs = [], fxs = [], chest = null;
+let hero = {x: 0, y: 0, hp: 100, cd: 0, ang: 0, swing: 0, tgt: null, goal: null, anim: 0};
+let ST = {}, clearT = 0, thinkT = 0, camX = 0, camY = 0, W = 300, H = 300, dpr = 1, ts = 36, goldWin = [], dirty = true;
+const dist = new Int16Array(MW * MH), par = new Int16Array(MW * MH), que = new Int16Array(MW * MH);
+let srcIdx = 0;
+
+// ================= items =================
+function rollRarity(f, boost) {
+  const w = [60 / (1 + .03 * f), 28 * (1 + .06 * f), 10 * (1 + .12 * f), 2.5 * (1 + .2 * f), .4 * (1 + .25 * f)];
+  for (let i = 1; i < 5; i++) w[i] *= 1 + boost * i;
+  let r = Math.random() * w.reduce((a, b) => a + b, 0);
+  for (let i = 0; i < 5; i++) if ((r -= w[i]) <= 0) return i;
+  return 0;
+}
+function makeItem(f, slot, boost) {
+  slot = slot || pick(SLOTS);
+  const rar = rollRarity(f, boost || 0);
+  const b = (4 + 2.4 * f) * RAR[rar].m * rf(.85, 1.15);
+  const s = {}; let name, wt = null;
+  if (slot === "weapon") { wt = pick(Object.keys(WT)); s.atk = b * WT[wt].am; name = WT[wt].nm; }
+  else {
+    name = pick(BASES[slot]);
+    if (slot === "helm") { s.def = b * .5; s.hp = b * 2; }
+    if (slot === "armor") { s.def = b * .9; s.hp = b * 3; }
+    if (slot === "boots") { s.def = b * .3; s.aspd = 2 + rar * 1.5; }
+    if (slot === "ring") { s.atk = b * .3; s.crit = 2 + rar * 1.5; }
+    if (slot === "amulet") { s.hp = b * 4; s.regen = b * .05; }
+  }
+  const pool = ["atk", "def", "hp", "crit", "aspd", "regen"].filter(k => !(k in s));
+  for (let i = 0; i < Math.min(rar, 3); i++) {
+    const k = pool.splice(ri(0, pool.length - 1), 1)[0];
+    s[k] = k === "atk" ? b * .25 : k === "def" ? b * .25 : k === "hp" ? b * .9 : k === "crit" ? 2 + ri(0, 3) + rar : k === "aspd" ? 3 + ri(0, 4) + rar * 1.5 : b * .05;
+  }
+  for (const k in s) s[k] = Math.round(s[k] * 10) / 10;
+  const full = (rar ? PRE[rar] + " " : "") + name + (rar >= 3 ? " " + pick(SUF) : "");
+  return {id: S.nid++, slot, rar, ilvl: f, name: full, s, wt};
+}
+function score(it) {
+  const s = it.s;
+  return (s.atk || 0) * 3 * (it.wt ? WT[it.wt].as : 1) + (s.def || 0) * 2 + (s.hp || 0) * .3 + (s.crit || 0) * 2 + (s.aspd || 0) * 1.2 + (s.regen || 0) * 4;
+}
+const itemValue = it => Math.max(1, Math.round(score(it) * .5 * (1 + it.rar * .6)));
+const statTxt = it => Object.keys(it.s).map(k => "+" + fmt(it.s[k]) + " " + STAT_LBL[k]).join("  ") + (it.wt ? "  · " + (WT[it.wt].ranged ? "ranged" : "melee") : "");
+
+function recalc() {
+  let atk = 8, def = 0, hp = 100, crit = 5, aspd = 0, regen = .5, wt = null;
+  for (const sl of SLOTS) {
+    const it = S.eq[sl]; if (!it) continue;
+    const s = it.s; atk += s.atk || 0; def += s.def || 0; hp += s.hp || 0; crit += s.crit || 0; aspd += s.aspd || 0; regen += s.regen || 0;
+    if (it.wt) wt = it.wt;
+  }
+  const t = S.tr, w = wt ? WT[wt] : {rng: 1.1, as: 1.0, ranged: false};
+  const old = ST.hp || hp;
+  ST = {atk: atk * (1 + .1 * t.str), def: def + 3 * t.tough, hp: hp * (1 + .1 * t.vit), crit, aspd: w.as * (1 + (aspd + 2 * t.swift) / 100), regen, rng: w.rng, ranged: w.ranged};
+  hero.hp = Math.min(ST.hp, hero.hp + Math.max(0, ST.hp - old));
+  dirty = true;
+}
+function sellItem(it) { gain(itemValue(it)); }
+function stash(it, why) {
+  if (S.autoJunk && it.rar <= 1) { sellItem(it); return; }
+  S.bag.push(it);
+  if (S.bag.length > BAG) {
+    S.bag.sort((a, b) => score(b) - score(a));
+    sellItem(S.bag.pop());
+  }
+  dirty = true;
+}
+function pickup(it) {
+  const cur = S.eq[it.slot], col = RAR[it.rar].c;
+  if (!cur || score(it) > score(cur)) {
+    S.eq[it.slot] = it; if (cur) stash(cur);
+    recalc(); say("Equipped " + it.name, col);
+  } else {
+    if (it.rar >= 2) say("Found " + it.name, col);
+    stash(it);
+  }
+  dirty = true;
+}
+function equipFromBag(id) {
+  const i = S.bag.findIndex(x => x.id === id); if (i < 0) return;
+  const it = S.bag.splice(i, 1)[0], cur = S.eq[it.slot];
+  S.eq[it.slot] = it; if (cur) S.bag.push(cur);
+  recalc();
+}
+function sellFromBag(id) {
+  const i = S.bag.findIndex(x => x.id === id); if (i < 0) return;
+  sellItem(S.bag.splice(i, 1)[0]); dirty = true;
+}
+function addPart(name, v) {
+  const val = Math.round(v * (2 + 1.2 * S.floor));
+  if (S.autoParts) { gain(val); return; }
+  const p = S.parts[name] || (S.parts[name] = {n: 0, val: 0});
+  p.n++; p.val += val; dirty = true;
+}
+function gain(g) { S.gold += g; goldWin.push([Date.now(), g]); }
+
+// ================= dungeon =================
+let rooms0 = null;
+function genFloor() {
+  const f = S.floor;
+  for (;;) {
+    grid = new Uint8Array(MW * MH); rooms = [];
+    const want = 6 + Math.min(4, Math.floor(f / 4)) + ri(0, 1);
+    for (let i = 0; i < 90 && rooms.length < want; i++) {
+      const w = ri(5, 9), h = ri(5, 8), x = ri(1, MW - w - 2), y = ri(1, MH - h - 2);
+      if (rooms.some(r => x < r.x + r.w + 2 && x + w + 2 > r.x && y < r.y + r.h + 2 && y + h + 2 > r.y)) continue;
+      rooms.push({x, y, w, h, cx: x + (w >> 1), cy: y + (h >> 1), visited: false, kind: "mon"});
+    }
+    if (rooms.length < 5) continue;
+    for (const r of rooms) for (let yy = r.y; yy < r.y + r.h; yy++) for (let xx = r.x; xx < r.x + r.w; xx++) grid[yy * MW + xx] = 1;
+    for (let i = 1; i < rooms.length; i++) carve(rooms[i - 1], rooms[i]);
+    if (Math.random() < .6) carve(rooms[0], rooms[rooms.length - 1]);
+    break;
+  }
+  seen.fill(0); vis.fill(0); mons = []; projs = []; fxs = []; chest = null;
+  const start = rooms[0];
+  bfs(start.cx, start.cy);
+  let boss = rooms[1], bd = -1;
+  for (const r of rooms) { const d = dist[r.cy * MW + r.cx]; if (r !== start && d > bd) { bd = d; boss = r; } }
+  boss.kind = "boss"; start.kind = "start"; start.visited = true;
+  const cand = rooms.filter(r => r.kind === "mon");
+  if (f >= 2 && cand.length > 2 && Math.random() < .2) {
+    const tr = pick(cand); tr.kind = "treasure";
+    chest = {x: tr.cx + .5, y: tr.cy + .5, open: false, mimic: Math.random() < .15, room: tr};
+  }
+  for (const r of rooms) {
+    if (r.kind === "mon") {
+      const n = Math.min(7, 2 + ri(0, 2 + Math.floor(f / 5)));
+      for (let i = 0; i < n; i++) spawnIn(r);
+    } else if (r.kind === "boss") {
+      const bi = (f - 1) % 10, cyc = Math.floor((f - 1) / 10), nm = BOSSES[bi][0] + (cyc ? " " + ["", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X"][Math.min(cyc, 9)] : "");
+      const base = TYPES.filter(t => t.minF <= f).slice(-1)[0];
+      const m = mk(base, r.cx + .5, r.cy + .5, false, true);
+      m.name = nm; m.col = BOSSES[bi][1]; m.parts = [[nm.split(" ")[0] + " Heart", 20, 1]];
+      mons.push(m);
+      for (let i = 0; i < 2; i++) spawnIn(r);
+    }
+  }
+  hero.x = start.cx + .5; hero.y = start.cy + .5; hero.tgt = null; hero.goal = null; hero.cd = .5;
+  camX = hero.x; camY = hero.y; clearT = 0;
+  think(true);
+  $("floor").textContent = "Floor " + f;
+  say("Floor " + f + (chest ? " - you sense treasure nearby" : ""), "#ffc94a");
+}
+function carve(a, b) {
+  const hor = (x1, x2, y) => { for (let x = Math.min(x1, x2); x <= Math.max(x1, x2); x++) grid[y * MW + x] = 1; };
+  const ver = (y1, y2, x) => { for (let y = Math.min(y1, y2); y <= Math.max(y1, y2); y++) grid[y * MW + x] = 1; };
+  if (Math.random() < .5) { hor(a.cx, b.cx, a.cy); ver(a.cy, b.cy, b.cx); } else { ver(a.cy, b.cy, a.cx); hor(a.cx, b.cx, b.cy); }
+}
+function spawnIn(r) {
+  const f = S.floor;
+  const pool = TYPES.filter(t => t.minF <= f).map(t => [t, t.w * (f - t.minF > 8 ? .5 : 1) * (f - t.minF < 3 ? 1.4 : 1)]);
+  let rr = Math.random() * pool.reduce((a, p) => a + p[1], 0), t = pool[0][0];
+  for (const p of pool) if ((rr -= p[1]) <= 0) { t = p[0]; break; }
+  const elite = Math.random() < Math.min(.25, .05 + f * .005);
+  mons.push(mk(t, r.x + 1 + Math.random() * (r.w - 2), r.y + 1 + Math.random() * (r.h - 2), elite, false));
+}
+function mk(t, x, y, elite, boss) {
+  const f = S.floor, hs = Math.pow(1.13, f - 1), as = Math.pow(1.09, f - 1);
+  let hp = 18 * t.hp * hs, atk = 4 * t.atk * as, g = t.g * (4 + 2 * f) * Math.pow(1.08, f), r = t.r;
+  if (elite) { hp *= 2.6; atk *= 1.5; g *= 3; r *= 1.25; }
+  if (boss) { hp *= 14; atk *= 2.2; g *= 25; r *= 1.9; }
+  return {t, x, y, name: (elite ? "Elite " : "") + t.name, shape: boss ? "boss" : t.shape, col: t.col, r, hp, max: hp, atk, spd: t.spd * (boss ? .8 : 1),
+    g, ranged: !!t.ranged, rng: t.rng || 0, ai: t.ai, cd: rf(.3, 1), awake: false, elite, boss, ph: rf(0, 6), flash: 0, dead: false,
+    parts: t.parts, ang: 0, bossT: 4, summoned: false};
+}
+
+// ================= pathing =================
+function bfs(sx, sy) {
+  dist.fill(-1); let h = 0, t = 0; const s = sy * MW + sx; dist[s] = 0; par[s] = -1; que[t++] = s; srcIdx = s;
+  while (h < t) {
+    const c = que[h++], cx = c % MW, cy = (c / MW) | 0, d = dist[c] + 1;
+    for (const [dx, dy] of K4) {
+      const nx = cx + dx, ny = cy + dy; if (nx < 0 || ny < 0 || nx >= MW || ny >= MH) continue;
+      const n = ny * MW + nx; if (!grid[n] || dist[n] >= 0) continue;
+      dist[n] = d; par[n] = c; que[t++] = n;
+    }
+  }
+}
+const solid = (x, y) => { const tx = Math.floor(x), ty = Math.floor(y); return tx < 0 || ty < 0 || tx >= MW || ty >= MH || !grid[ty * MW + tx]; };
+function los(ax, ay, bx, by) {
+  const d = Math.hypot(bx - ax, by - ay), n = Math.ceil(d / .3);
+  for (let i = 1; i < n; i++) if (solid(ax + (bx - ax) * i / n, ay + (by - ay) * i / n)) return false;
+  return true;
+}
+function nextTileTo(tx, ty) {
+  let c = ty * MW + tx; if (dist[c] < 0) return null;
+  if (dist[c] === 0) return [tx + .5, ty + .5];
+  while (dist[c] > 1) c = par[c];
+  return [(c % MW) + .5, ((c / MW) | 0) + .5];
+}
+function stepOn(e, tx, ty, sp, dt) {
+  const dx = tx - e.x, dy = ty - e.y, d = Math.hypot(dx, dy); if (d < 1e-4) return;
+  const s = Math.min(d, sp * dt); e.x += dx / d * s; e.y += dy / d * s; e.ang = Math.atan2(dy, dx);
+}
+function slide(e, dx, dy) { // direct move with wall collision
+  if (!solid(e.x + dx, e.y)) e.x += dx;
+  if (!solid(e.x, e.y + dy)) e.y += dy;
+}
+
+// ================= AI think =================
+function think(first) {
+  const hx = Math.floor(hero.x), hy = Math.floor(hero.y);
+  bfs(hx, hy);
+  vis.fill(0);
+  for (let i = 0; i < MW * MH; i++) if (dist[i] >= 0 && dist[i] <= 8) { vis[i] = 1; seen[i] = 1; }
+  for (const r of rooms) if (!r.visited && hx >= r.x && hx < r.x + r.w && hy >= r.y && hy < r.y + r.h) {
+    r.visited = true;
+    if (r.kind === "treasure") say("A treasure room!", "#ffc94a");
+    if (r.kind === "boss") say("The boss lair...", "#e5484d");
+  }
+  let tgt = null, bd = 1e9;
+  for (const m of mons) {
+    if (m.dead) continue;
+    const d = dist[Math.floor(m.y) * MW + Math.floor(m.x)];
+    if (d >= 0 && d <= 9) m.awake = true;
+    if (m.awake && d >= 0 && d < bd) { bd = d; tgt = m; }
+  }
+  hero.tgt = tgt; hero.goal = null;
+  if (tgt) return;
+  const tile = (x, y) => y * MW + x;
+  if (chest && !chest.open && chest.room.visited) { hero.goal = [Math.floor(chest.x), Math.floor(chest.y)]; return; }
+  let best = null; bd = 1e9;
+  for (const r of rooms) {
+    if (r.visited || r.kind === "boss") continue;
+    const d = dist[tile(r.cx, r.cy)]; if (d >= 0 && d < bd) { bd = d; best = r; }
+  }
+  if (best) { hero.goal = [best.cx, best.cy]; return; }
+  bd = 1e9; let bm = null;
+  for (const m of mons) {
+    if (m.dead || m.boss) continue;
+    const d = dist[Math.floor(m.y) * MW + Math.floor(m.x)]; if (d >= 0 && d < bd) { bd = d; bm = m; }
+  }
+  if (!bm) bm = mons.find(m => !m.dead);
+  if (bm) hero.goal = [Math.floor(bm.x), Math.floor(bm.y)];
+}
+
+// ================= combat =================
+function say(txt, col) {
+  const l = $("log"), d = document.createElement("div");
+  d.textContent = txt; d.style.color = col || "#fff"; l.appendChild(d);
+  while (l.children.length > 5) l.removeChild(l.firstChild);
+  setTimeout(() => d.remove(), 6000);
+}
+function ftext(x, y, s, c, big) { fxs.push({x, y, s, c, t: .8, big}); }
+function hurtHero(raw, from) {
+  const k = 25 + 10 * S.floor, d = Math.max(1, raw * k / (k + ST.def));
+  hero.hp -= d; ftext(hero.x, hero.y - .5, fmt(d), "#ff6b6b");
+  if (hero.hp <= 0) {
+    hero.hp = ST.hp;
+    const nf = Math.max(1, S.floor - 1);
+    say("You were defeated" + (nf < S.floor ? " - retreating to floor " + nf : "") + ", slain by " + (from || "a monster"), "#e5484d");
+    S.floor = nf; genFloor();
+  }
+}
+function hitMon(m, dmg, crit) {
+  if (m.dead) return;
+  m.hp -= dmg; m.flash = .08; m.awake = true;
+  ftext(m.x, m.y - m.r - .2, fmt(dmg) + (crit ? "!" : ""), crit ? "#ffd24a" : "#fff", crit);
+  if (m.hp <= 0) kill(m);
+}
+function kill(m) {
+  m.dead = true; S.kills++;
+  const gold = Math.round(m.g * (1 + .08 * S.tr.fort)); gain(gold);
+  ftext(m.x, m.y - .8, "+" + fmt(gold), "#ffc94a");
+  const luck = 1 + .04 * S.tr.luck, f = S.floor;
+  const rolls = m.boss ? 2 : 1, ic = m.boss || m.mimic ? 1 : (.1 + (m.elite ? .25 : 0)) * luck;
+  for (let i = 0; i < rolls; i++) if (Math.random() < ic) pickup(makeItem(f, null, m.boss ? 1.2 : m.mimic ? 1.5 : m.elite ? .4 : 0));
+  if (m.mimic) pickup(makeItem(f, null, 1.5));
+  for (const [n, v, c] of m.parts) if (Math.random() < c * (m.elite ? 2 : 1) * luck) { addPart(n, v); ftext(m.x + rf(-.4, .4), m.y + .2, n, "#9ad0ff"); }
+  for (let i = 0; i < (m.boss ? 24 : 8); i++) fxs.push({x: m.x, y: m.y, vx: rf(-3, 3), vy: rf(-3, 3), t: .5, c: m.col, p: 1});
+  if (m.boss) say(m.name + " has fallen!", "#ffc94a");
+}
+function openChest() {
+  chest.open = true;
+  if (chest.mimic) {
+    const m = mk(MIMIC, chest.x, chest.y, false, false);
+    m.mimic = true; m.awake = true; m.name = "Mimic"; m.cd = .4;
+    mons.push(m); say("It was a MIMIC!", "#e5484d"); chest.gone = true; return;
+  }
+  const f = S.floor, g = Math.round(15 * (4 + 2 * f) * Math.pow(1.08, f));
+  gain(g); say("Treasure! +" + fmt(g) + " gold", "#ffc94a");
+  const best = [makeItem(f, null, 1), makeItem(f, null, 1)].sort((a, b) => score(b) - score(a))[0];
+  pickup(best);
+  if (Math.random() < .6) { addPart("Gemstone", 8); say("Found a Gemstone", "#9ad0ff"); }
+  if (Math.random() < .25) { addPart("Ancient Relic", 16); say("Found an Ancient Relic", "#9ad0ff"); }
+}
+
+function update(dt) {
+  thinkT -= dt; if (thinkT <= 0) { think(); thinkT = .2; }
+  hero.anim += dt; hero.swing = Math.max(0, hero.swing - dt * 5);
+  hero.hp = Math.min(ST.hp, hero.hp + ST.regen * dt);
+  hero.cd -= dt;
+
+  // hero
+  const t = hero.tgt;
+  if (t && !t.dead) {
+    const d = Math.hypot(t.x - hero.x, t.y - hero.y);
+    hero.ang = Math.atan2(t.y - hero.y, t.x - hero.x);
+    const reach = ST.rng + t.r * .5;
+    if (d <= reach && (!ST.ranged || los(hero.x, hero.y, t.x, t.y))) {
+      if (hero.cd <= 0) {
+        hero.cd = 1 / ST.aspd; hero.swing = 1;
+        const crit = Math.random() * 100 < ST.crit, dmg = ST.atk * rf(.9, 1.1) * (crit ? 2 : 1);
+        if (ST.ranged) projs.push({x: hero.x, y: hero.y, own: 1, tgt: t, dmg, crit, life: 2, col: S.eq.weapon && S.eq.weapon.wt === "staff" ? "#c58bff" : "#ffe9a0", sp: 11});
+        else hitMon(t, dmg, crit);
+      }
+    } else {
+      const n = nextTileTo(Math.floor(t.x), Math.floor(t.y));
+      if (n) { if (d < 1.5 && los(hero.x, hero.y, t.x, t.y)) stepOn(hero, t.x, t.y, 3.4, dt); else stepOn(hero, n[0], n[1], 3.4, dt); }
+    }
+  } else if (hero.goal) {
+    const n = nextTileTo(hero.goal[0], hero.goal[1]);
+    if (n) stepOn(hero, n[0], n[1], 3.4, dt);
+    if (chest && !chest.open && Math.hypot(chest.x - hero.x, chest.y - hero.y) < 1.1) openChest();
+  }
+
+  // monsters
+  const dm = {};
+  for (const m of mons) {
+    if (m.dead) continue;
+    m.flash -= dt; m.cd -= dt; m.ph += dt * 5;
+    if (!m.awake) continue;
+    const d = Math.hypot(hero.x - m.x, hero.y - m.y);
+    m.ang = Math.atan2(hero.y - m.y, hero.x - m.x);
+    if (m.ranged) {
+      if (d > m.rng * .9 || !los(m.x, m.y, hero.x, hero.y)) chase(m, d, dt);
+      else if (m.cd <= 0) { m.cd = m.ai; projs.push({x: m.x, y: m.y, own: 0, vx: Math.cos(m.ang), vy: Math.sin(m.ang), dmg: m.atk, life: 2.2, col: m.shape === "spider" ? "#a8e060" : "#d070ff", sp: 6, from: m.name}); }
+    } else if (d > m.r + .45) chase(m, d, dt);
+    else if (m.cd <= 0) { m.cd = m.ai; hurtHero(m.atk, m.name); }
+    if (m.boss) {
+      m.bossT -= dt;
+      if (m.bossT <= 0) {
+        m.bossT = 5; const n = 10, o = Math.random() * 6;
+        for (let i = 0; i < n; i++) projs.push({x: m.x, y: m.y, own: 0, vx: Math.cos(o + i * 6.283 / n), vy: Math.sin(o + i * 6.283 / n), dmg: m.atk * .5, life: 2.5, col: "#ff7a5a", sp: 4.5, from: m.name});
+      }
+      if (!m.summoned && m.hp < m.max * .5) {
+        m.summoned = true; say(m.name + " calls for help!", "#e5484d");
+        const r = rooms.find(r => r.kind === "boss"); spawnIn(r); spawnIn(r); mons[mons.length - 1].awake = mons[mons.length - 2].awake = true;
+      }
+    }
+  }
+  for (let i = 0; i < mons.length; i++) { // separation
+    const a = mons[i]; if (a.dead) continue;
+    for (let j = i + 1; j < mons.length; j++) {
+      const b = mons[j]; if (b.dead) continue;
+      const dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy), min = (a.r + b.r) * .8;
+      if (d < min && d > 1e-4) { const p = (min - d) / 2 / d; slide(a, -dx * p, -dy * p); slide(b, dx * p, dy * p); }
+    }
+  }
+  mons = mons.filter(m => !m.dead);
+
+  // projectiles
+  for (const p of projs) {
+    p.life -= dt;
+    if (p.own) {
+      const tg = p.tgt && !p.tgt.dead ? p.tgt : null;
+      if (tg) { const dx = tg.x - p.x, dy = tg.y - p.y, d = Math.hypot(dx, dy) || 1; p.vx = dx / d; p.vy = dy / d; if (d < tg.r + .2) { hitMon(tg, p.dmg, p.crit); p.life = 0; continue; } }
+      else if (p.vx === undefined) { p.life = 0; continue; }
+    } else if (Math.hypot(hero.x - p.x, hero.y - p.y) < .45) { hurtHero(p.dmg, p.from); p.life = 0; continue; }
+    p.x += p.vx * p.sp * dt; p.y += p.vy * p.sp * dt;
+    if (solid(p.x, p.y)) p.life = 0;
+  }
+  projs = projs.filter(p => p.life > 0);
+
+  for (const f of fxs) { f.t -= dt; if (f.p) { f.x += f.vx * dt; f.y += f.vy * dt; } else f.y -= .9 * dt; }
+  fxs = fxs.filter(f => f.t > 0);
+
+  // floor clear
+  if (!mons.some(m => !m.dead) && !(chest && !chest.open && false)) {
+    if (clearT === 0) { say("Floor " + S.floor + " cleared!", "#5be37d"); }
+    clearT += dt;
+    if (clearT > 2.2) { S.floor++; if (S.floor > S.best) S.best = S.floor; genFloor(); }
+  }
+}
+function chase(m, d, dt) {
+  const mx = Math.floor(m.x), my = Math.floor(m.y);
+  if (d < 2 && los(m.x, m.y, hero.x, hero.y)) {
+    const s = Math.min(d, m.spd * dt); slide(m, Math.cos(m.ang) * s, Math.sin(m.ang) * s); return;
+  }
+  const c = my * MW + mx; let best = null, bv = dist[c] < 0 ? 1e9 : dist[c];
+  for (const [dx, dy] of K4) {
+    const nx = mx + dx, ny = my + dy; if (nx < 0 || ny < 0 || nx >= MW || ny >= MH) continue;
+    const v = dist[ny * MW + nx]; if (v >= 0 && v < bv) { bv = v; best = [nx + .5, ny + .5]; }
+  }
+  if (best) { const a = m.ang; stepOn(m, best[0], best[1], m.spd, dt); m.ang = a; }
+}
+
+// ================= rendering =================
+const cv = $("c"), ctx = cv.getContext("2d");
+function resize() {
+  const r = cv.getBoundingClientRect(); dpr = Math.min(window.devicePixelRatio || 1, 2);
+  W = r.width; H = r.height; cv.width = W * dpr; cv.height = H * dpr;
+  ts = Math.max(28, Math.min(W / 10, 48));
+}
+addEventListener("resize", resize);
+
+function drawMon(m, T) {
+  const r = m.r * ts, bob = Math.sin(m.ph) * r * .08;
+  ctx.save(); ctx.translate(m.x * ts, m.y * ts);
+  ctx.fillStyle = "rgba(0,0,0,.35)"; ctx.beginPath(); ctx.ellipse(0, r * .75, r * .9, r * .35, 0, 0, 6.283); ctx.fill();
+  const col = m.flash > 0 ? "#fff" : m.col;
+  ctx.fillStyle = col; ctx.strokeStyle = "rgba(0,0,0,.5)"; ctx.lineWidth = 2;
+  const eyes = (dy, sp, c, rr) => { ctx.fillStyle = c || "#fff"; for (const s of [-1, 1]) { ctx.beginPath(); ctx.arc(s * sp * r, dy * r, (rr || .17) * r, 0, 6.283); ctx.fill(); } };
+  if (m.elite || m.boss) { ctx.shadowColor = m.boss ? "#ff4a4a" : "#ffc94a"; ctx.shadowBlur = 14; }
+  switch (m.shape) {
+    case "slime": ctx.beginPath(); ctx.ellipse(0, r * .25, r * 1.1, r * (.75 + .08 * Math.sin(m.ph)), 0, 0, 6.283); ctx.fill(); ctx.stroke(); ctx.shadowBlur = 0; eyes(.1, .35, "#12331a", .13); break;
+    case "rat": ctx.rotate(m.ang); ctx.beginPath(); ctx.ellipse(0, 0, r * 1.1, r * .7, 0, 0, 6.283); ctx.fill(); ctx.stroke(); ctx.shadowBlur = 0;
+      ctx.strokeStyle = "#d9a0a0"; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(-r, 0); ctx.quadraticCurveTo(-r * 1.6, r * .6, -r * 2, 0); ctx.stroke();
+      ctx.fillStyle = "#d9a0a0"; ctx.beginPath(); ctx.arc(r * .3, -r * .6, r * .3, 0, 6.283); ctx.arc(r * .3, r * .6, r * .3, 0, 6.283); ctx.fill();
+      ctx.fillStyle = "#200"; ctx.beginPath(); ctx.arc(r * .8, -r * .2, r * .12, 0, 6.283); ctx.arc(r * .8, r * .2, r * .12, 0, 6.283); ctx.fill(); break;
+    case "bat": { const w = Math.sin(m.ph * 2.2) * .6 + .4; ctx.translate(0, bob * 4 - r * .3);
+      ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(-r * 1.7, -r * w); ctx.lineTo(-r * 1.1, r * .4); ctx.closePath(); ctx.moveTo(0, 0); ctx.lineTo(r * 1.7, -r * w); ctx.lineTo(r * 1.1, r * .4); ctx.closePath(); ctx.fill(); ctx.stroke();
+      ctx.beginPath(); ctx.arc(0, 0, r * .6, 0, 6.283); ctx.fill(); ctx.shadowBlur = 0; eyes(-.05, .22, "#ff5a5a", .1); break; }
+    case "goblin": ctx.beginPath(); ctx.arc(0, bob, r, 0, 6.283); ctx.fill(); ctx.stroke(); ctx.shadowBlur = 0;
+      ctx.beginPath(); ctx.moveTo(-r * .9, -r * .2); ctx.lineTo(-r * 1.6, -r * .7); ctx.lineTo(-r * .7, -r * .6); ctx.moveTo(r * .9, -r * .2); ctx.lineTo(r * 1.6, -r * .7); ctx.lineTo(r * .7, -r * .6); ctx.fill();
+      eyes(-.1, .35, "#ffe040", .15); ctx.fillStyle = "#6a4a2a"; ctx.fillRect(r * .9, -r * .2, r * .25, r * 1.2); break;
+    case "skel": ctx.beginPath(); ctx.arc(0, -r * .2 + bob, r * .75, 0, 6.283); ctx.fill(); ctx.stroke(); ctx.shadowBlur = 0;
+      ctx.fillStyle = col; ctx.fillRect(-r * .5, r * .4, r, r * .5); ctx.strokeStyle = "#0006"; for (let i = 0; i < 3; i++) { ctx.beginPath(); ctx.moveTo(-r * .5, r * (.5 + i * .15)); ctx.lineTo(r * .5, r * (.5 + i * .15)); ctx.stroke(); }
+      eyes(-.25, .3, "#1a1a28", .2); break;
+    case "wolf": ctx.rotate(m.ang); ctx.beginPath(); ctx.ellipse(0, 0, r * 1.2, r * .65, 0, 0, 6.283); ctx.fill(); ctx.stroke(); ctx.shadowBlur = 0;
+      ctx.beginPath(); ctx.arc(r * .9, 0, r * .5, 0, 6.283); ctx.fill(); ctx.stroke(); ctx.beginPath(); ctx.moveTo(r * .7, -r * .4); ctx.lineTo(r * .6, -r * .9); ctx.lineTo(r * 1, -r * .5); ctx.moveTo(r * .7, r * .4); ctx.lineTo(r * .6, r * .9); ctx.lineTo(r * 1, r * .5); ctx.fill();
+      ctx.fillStyle = "#ffcf5a"; ctx.beginPath(); ctx.arc(r * 1.1, -r * .18, r * .09, 0, 6.283); ctx.arc(r * 1.1, r * .18, r * .09, 0, 6.283); ctx.fill(); break;
+    case "spider": ctx.strokeStyle = col === "#fff" ? "#fff" : "#2a2030"; ctx.lineWidth = 2.5;
+      for (let i = 0; i < 4; i++) for (const s of [-1, 1]) { const a = (i - 1.5) * .5, w = Math.sin(m.ph + i) * .15; ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(s * r * 1.1, r * (a * 1.3 + w)); ctx.lineTo(s * r * 1.5, r * (a * 2 + .4 + w)); ctx.stroke(); }
+      ctx.beginPath(); ctx.arc(0, 0, r * .8, 0, 6.283); ctx.fill(); ctx.shadowBlur = 0; ctx.fillStyle = "#ff3a3a"; ctx.beginPath(); ctx.arc(-r * .25, -r * .2, r * .13, 0, 6.283); ctx.arc(r * .25, -r * .2, r * .13, 0, 6.283); ctx.fill(); break;
+    case "mage": ctx.beginPath(); ctx.moveTo(0, -r); ctx.lineTo(r * .95, r * .9); ctx.lineTo(-r * .95, r * .9); ctx.closePath(); ctx.fill(); ctx.stroke(); ctx.shadowBlur = 0;
+      ctx.fillStyle = "#f0d9c0"; ctx.beginPath(); ctx.arc(0, -r * .35, r * .3, 0, 6.283); ctx.fill();
+      ctx.fillStyle = "#e08bff"; ctx.beginPath(); ctx.arc(r * .9, -r * .1 + bob * 2, r * .22, 0, 6.283); ctx.fill(); break;
+    case "orc": ctx.beginPath(); ctx.arc(0, bob, r, 0, 6.283); ctx.fill(); ctx.stroke(); ctx.shadowBlur = 0; eyes(-.15, .38, "#ffd040", .14);
+      ctx.fillStyle = "#f4f0e0"; ctx.beginPath(); ctx.moveTo(-r * .4, r * .3); ctx.lineTo(-r * .3, r * .8); ctx.lineTo(-r * .15, r * .3); ctx.moveTo(r * .4, r * .3); ctx.lineTo(r * .3, r * .8); ctx.lineTo(r * .15, r * .3); ctx.fill(); break;
+    case "golem": ctx.beginPath(); ctx.rect(-r, -r + bob, r * 2, r * 1.8); ctx.fill(); ctx.stroke(); ctx.shadowBlur = 0; ctx.fillStyle = "#6a655a"; ctx.fillRect(-r * 1.3, -r * .5, r * .4, r * 1.1); ctx.fillRect(r * .9, -r * .5, r * .4, r * 1.1); eyes(-.3, .4, "#ffa040", .16); break;
+    case "wraith": ctx.globalAlpha = .8; ctx.beginPath(); ctx.arc(0, -r * .2 + bob * 2, r * .8, Math.PI, 0); for (let i = 0; i <= 4; i++) ctx.lineTo(r * (.8 - i * .4), r * (.9 + Math.sin(m.ph + i * 1.5) * .2)); ctx.closePath(); ctx.fill(); ctx.shadowBlur = 0; eyes(-.25, .3, "#0a1a30", .17); ctx.globalAlpha = 1; break;
+    case "mimic": ctx.fillStyle = m.flash > 0 ? "#fff" : "#8a5a24"; ctx.fillRect(-r, -r * .5, r * 2, r * 1.3); ctx.fillStyle = m.flash > 0 ? "#fff" : "#b07a3a"; ctx.fillRect(-r, -r * .9, r * 2, r * .5);
+      ctx.fillStyle = "#c01a1a"; ctx.fillRect(-r * .9, -r * .1, r * 1.8, r * .3); ctx.fillStyle = "#fff"; for (let i = 0; i < 5; i++) { ctx.beginPath(); ctx.moveTo(-r * .9 + i * r * .45, -r * .1); ctx.lineTo(-r * .67 + i * r * .45, r * .2); ctx.lineTo(-r * .45 + i * r * .45, -r * .1); ctx.fill(); } ctx.shadowBlur = 0; break;
+    case "boss": ctx.fillStyle = "rgba(0,0,0,.2)"; ctx.beginPath(); ctx.arc(0, 0, r * 1.15, 0, 6.283); ctx.fill(); ctx.fillStyle = col; ctx.beginPath(); ctx.arc(0, bob, r, 0, 6.283); ctx.fill(); ctx.stroke(); ctx.shadowBlur = 0;
+      ctx.fillStyle = "#ffc94a"; ctx.beginPath(); for (let i = 0; i < 5; i++) { const a = -Math.PI / 2 + (i - 2) * .38; ctx.moveTo(Math.cos(a) * r * .75, Math.sin(a) * r * .75 + bob); ctx.lineTo(Math.cos(a) * r * 1.35, Math.sin(a) * r * 1.35 + bob); ctx.lineTo(Math.cos(a + .2) * r * .75, Math.sin(a + .2) * r * .75 + bob); } ctx.fill();
+      eyes(-.05, .38, "#ff2a2a", .17); break;
+    default: ctx.beginPath(); ctx.arc(0, 0, r, 0, 6.283); ctx.fill(); ctx.stroke();
+  }
+  ctx.shadowBlur = 0; ctx.restore();
+  if (m.hp < m.max && !m.boss) {
+    const bw = Math.max(r * 2, ts * .6), bx = m.x * ts - bw / 2, by = m.y * ts - r - 10;
+    ctx.fillStyle = "#000b"; ctx.fillRect(bx, by, bw, 4); ctx.fillStyle = m.elite ? "#ffc94a" : "#e5484d"; ctx.fillRect(bx, by, bw * Math.max(0, m.hp / m.max), 4);
+  }
+}
+function drawHero(T) {
+  const r = ts * .36, wr = S.eq.weapon ? RAR[S.eq.weapon.rar].c : "#aab";
+  ctx.save(); ctx.translate(hero.x * ts, hero.y * ts);
+  ctx.fillStyle = "rgba(0,0,0,.35)"; ctx.beginPath(); ctx.ellipse(0, r * .8, r, r * .38, 0, 0, 6.283); ctx.fill();
+  ctx.rotate(hero.ang);
+  const sw = hero.swing, wt = S.eq.weapon ? S.eq.weapon.wt : null;
+  ctx.strokeStyle = wr; ctx.lineWidth = wt === "axe" ? 5 : 3; ctx.lineCap = "round";
+  ctx.save(); ctx.rotate(Math.sin(sw * 3.14) * -1.1 + .5);
+  ctx.beginPath();
+  if (wt === "bow") { ctx.arc(r * 1.1, 0, r * .9, -1.2, 1.2); }
+  else if (wt === "staff") { ctx.moveTo(r * .2, 0); ctx.lineTo(r * 1.9, 0); ctx.stroke(); ctx.fillStyle = "#c58bff"; ctx.beginPath(); ctx.arc(r * 1.9, 0, r * .25, 0, 6.283); ctx.fill(); ctx.beginPath(); }
+  else { ctx.moveTo(r * .7, 0); ctx.lineTo(r * (wt === "dagger" ? 1.5 : 2), 0); }
+  ctx.stroke(); ctx.restore();
+  ctx.fillStyle = S.eq.armor ? RAR[S.eq.armor.rar].c : "#5a8cff"; ctx.strokeStyle = "rgba(0,0,0,.55)"; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.arc(0, 0, r, 0, 6.283); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = S.eq.helm ? RAR[S.eq.helm.rar].c : "#e8c9a0"; ctx.beginPath(); ctx.arc(r * .15, 0, r * .55, 0, 6.283); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = "#101020"; ctx.fillRect(r * .35, -r * .25, r * .22, r * .12); ctx.fillRect(r * .35, r * .13, r * .22, r * .12);
+  ctx.restore();
+}
+function draw(T) {
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.fillStyle = "#06070d"; ctx.fillRect(0, 0, W, H);
+  camX += (hero.x - camX) * .12; camY += (hero.y - camY) * .12;
+  ctx.save(); ctx.translate(W / 2 - camX * ts, H / 2 - camY * ts);
+  const x0 = Math.max(0, Math.floor(camX - W / 2 / ts) - 1), x1 = Math.min(MW - 1, Math.ceil(camX + W / 2 / ts) + 1);
+  const y0 = Math.max(0, Math.floor(camY - H / 2 / ts) - 1), y1 = Math.min(MH - 1, Math.ceil(camY + H / 2 / ts) + 1);
+  const isSeen = (x, y) => x >= 0 && y >= 0 && x < MW && y < MH && grid[y * MW + x] && seen[y * MW + x];
+  for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
+    const i = y * MW + x;
+    if (grid[i]) {
+      if (!seen[i]) continue;
+      const h = (x * 7 + y * 13) % 5;
+      ctx.fillStyle = (x + y) & 1 ? "#2c3047" : "#292d43"; if (h === 0) ctx.fillStyle = "#30344d";
+      ctx.fillRect(x * ts, y * ts, ts + .5, ts + .5);
+      if (!vis[i]) { ctx.fillStyle = "rgba(4,5,12,.55)"; ctx.fillRect(x * ts, y * ts, ts + .5, ts + .5); }
+    } else {
+      let near = false;
+      for (let dy = -1; dy <= 1 && !near; dy++) for (let dx = -1; dx <= 1; dx++) if (isSeen(x + dx, y + dy)) { near = true; break; }
+      if (!near) continue;
+      ctx.fillStyle = "#171a2b"; ctx.fillRect(x * ts, y * ts, ts + .5, ts + .5);
+      if (isSeen(x, y + 1)) { ctx.fillStyle = "#3a3f5e"; ctx.fillRect(x * ts, (y + 1) * ts - 4, ts + .5, 4); }
+    }
+  }
+  // chest
+  if (chest && !chest.gone && seen[Math.floor(chest.y) * MW + Math.floor(chest.x)]) {
+    const cx = chest.x * ts, cy = chest.y * ts, s = ts * .38;
+    ctx.fillStyle = "#8a5a24"; ctx.fillRect(cx - s, cy - s * .6, s * 2, s * 1.3); ctx.fillStyle = chest.open ? "#4a2f10" : "#b07a3a"; ctx.fillRect(cx - s, cy - s * (chest.open ? 1.3 : .9), s * 2, s * .5);
+    ctx.fillStyle = "#ffc94a"; ctx.fillRect(cx - s * .15, cy - s * .3, s * .3, s * .4);
+    if (!chest.open) { ctx.globalAlpha = .4 + .3 * Math.sin(T / 300); ctx.fillStyle = "#ffe08a"; ctx.beginPath(); ctx.arc(cx, cy, s * 1.6, 0, 6.283); ctx.fill(); ctx.globalAlpha = 1; }
+  }
+  for (const m of mons) if (!m.dead && vis[Math.floor(m.y) * MW + Math.floor(m.x)]) drawMon(m, T);
+  drawHero(T);
+  for (const p of projs) {
+    ctx.fillStyle = p.col; ctx.shadowColor = p.col; ctx.shadowBlur = 8;
+    ctx.beginPath(); ctx.arc(p.x * ts, p.y * ts, p.own ? 3.5 : 4.5, 0, 6.283); ctx.fill();
+  }
+  ctx.shadowBlur = 0;
+  for (const f of fxs) {
+    ctx.globalAlpha = Math.min(1, f.t * 2.5);
+    if (f.p) { ctx.fillStyle = f.c; ctx.fillRect(f.x * ts - 2, f.y * ts - 2, 4, 4); }
+    else { ctx.font = (f.big ? "bold 17px" : "bold 12px") + " system-ui"; ctx.textAlign = "center"; ctx.lineWidth = 3; ctx.strokeStyle = "#000"; ctx.strokeText(f.s, f.x * ts, f.y * ts); ctx.fillStyle = f.c; ctx.fillText(f.s, f.x * ts, f.y * ts); }
+  }
+  ctx.globalAlpha = 1; ctx.restore();
+  // light vignette
+  const g = ctx.createRadialGradient(W / 2, H / 2, ts * 2.5, W / 2, H / 2, Math.max(W, H) * .65);
+  g.addColorStop(0, "rgba(0,0,0,0)"); g.addColorStop(1, "rgba(0,0,0,.7)"); ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  // boss bar
+  const boss = mons.find(m => m.boss && m.awake);
+  if (boss) {
+    const bw = W * .6, bx = (W - bw) / 2;
+    ctx.fillStyle = "#000a"; ctx.fillRect(bx, 8, bw, 12); ctx.fillStyle = "#e5484d"; ctx.fillRect(bx, 8, bw * Math.max(0, boss.hp / boss.max), 12);
+    ctx.strokeStyle = "#ffc94a"; ctx.lineWidth = 1; ctx.strokeRect(bx, 8, bw, 12);
+    ctx.fillStyle = "#fff"; ctx.font = "bold 11px system-ui"; ctx.textAlign = "center"; ctx.fillText(boss.name, W / 2, 18);
+  }
+  // minimap
+  const mp = 3, mx = W - MW * mp - 6, my = 6;
+  ctx.globalAlpha = .75; ctx.fillStyle = "#000"; ctx.fillRect(mx - 2, my - 2, MW * mp + 4, MH * mp + 4);
+  for (let y = 0; y < MH; y++) for (let x = 0; x < MW; x++) { const i = y * MW + x; if (grid[i] && seen[i]) { ctx.fillStyle = vis[i] ? "#7d86b8" : "#444a70"; ctx.fillRect(mx + x * mp, my + y * mp, mp, mp); } }
+  if (chest && !chest.open && seen[Math.floor(chest.y) * MW + Math.floor(chest.x)]) { ctx.fillStyle = "#ffc94a"; ctx.fillRect(mx + Math.floor(chest.x) * mp - 1, my + Math.floor(chest.y) * mp - 1, mp + 2, mp + 2); }
+  for (const m of mons) if (!m.dead && vis[Math.floor(m.y) * MW + Math.floor(m.x)]) { ctx.fillStyle = m.boss ? "#ff4a4a" : "#e5484d"; ctx.fillRect(mx + Math.floor(m.x) * mp, my + Math.floor(m.y) * mp, mp, mp); }
+  ctx.fillStyle = "#6ab0ff"; ctx.fillRect(mx + Math.floor(hero.x) * mp - 1, my + Math.floor(hero.y) * mp - 1, mp + 2, mp + 2);
+  ctx.globalAlpha = 1;
+}
+
+// ================= UI =================
+const TABS = [["gear", "Gear"], ["bag", "Bag"], ["parts", "Parts"], ["train", "Train"]];
+let tab = "gear";
+const tabsEl = $("tabs"), panel = $("panel");
+tabsEl.innerHTML = TABS.map(t => `<button data-t="${t[0]}">${t[1]}</button>`).join("");
+tabsEl.onclick = e => { const t = e.target.dataset.t; if (t) { tab = t; dirty = true; renderPanel(); } };
+const esc = s => String(s).replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
+const itemName = it => `<span style="color:${RAR[it.rar].c}">${esc(it.name)}</span>`;
+
+function renderPanel() {
+  for (const b of tabsEl.children) b.classList.toggle("on", b.dataset.t === tab);
+  if (tab === "train") { renderTrain(); return; }
+  dirty = false; let h = "";
+  if (tab === "gear") {
+    h += `<div class="stats"><div>HP<b>${fmt(ST.hp)}</b></div><div>ATK<b>${fmt(ST.atk)}</b></div><div>DEF<b>${fmt(ST.def)}</b></div>
+      <div>SPD<b>${ST.aspd.toFixed(2)}/s</b></div><div>CRIT<b>${fmt(ST.crit)}%</b></div><div>REGEN<b>${ST.regen.toFixed(1)}/s</b></div></div>`;
+    for (const sl of SLOTS) {
+      const it = S.eq[sl];
+      h += `<div class="row"><div class="sl">${SLOT_NAME[sl]}</div><div class="nm">${it ? itemName(it) + `<small>Lv ${it.ilvl} ${RAR[it.rar].n} · ${statTxt(it)}</small>` : '<span style="color:var(--dim)">Empty</span>'}</div></div>`;
+    }
+  } else if (tab === "bag") {
+    h += `<div class="bar"><button class="tg ${S.autoJunk ? "on" : ""}" data-a="junk">Auto-sell common &amp; uncommon: ${S.autoJunk ? "ON" : "OFF"}</button>
+      <button class="tg" data-a="sellbag">Sell all (${S.bag.filter(x => true).length})</button></div>`;
+    const items = S.bag.slice().sort((a, b) => score(b) - score(a));
+    if (!items.length) h += `<div class="empty">Your bag is empty. Better gear is equipped automatically.<br>Capacity ${BAG}.</div>`;
+    for (const it of items) {
+      const cur = S.eq[it.slot], better = cur && score(it) > score(cur);
+      h += `<div class="row"><div class="sl">${SLOT_NAME[it.slot]}</div><div class="nm">${itemName(it)}<small>Lv ${it.ilvl} · ${statTxt(it)}</small></div>
+        <button data-e="${it.id}">Equip</button><button class="sell" data-s="${it.id}">${fmt(itemValue(it))}g</button></div>`;
+    }
+    h += `<div class="foot">${S.bag.length}/${BAG} slots</div>`;
+  } else if (tab === "parts") {
+    const names = Object.keys(S.parts), total = names.reduce((a, n) => a + S.parts[n].val, 0);
+    h += `<div class="bar"><button class="tg ${S.autoParts ? "on" : ""}" data-a="autoparts">Auto-sell parts: ${S.autoParts ? "ON" : "OFF"}</button>
+      <button class="tg" data-a="sellparts">Sell all (${fmt(total)}g)</button></div>`;
+    if (!names.length) h += `<div class="empty">Monsters drop fangs, claws, hides and more.<br>Sell them for gold.</div>`;
+    for (const n of names.sort()) { const p = S.parts[n]; h += `<div class="row"><div class="nm">${esc(n)}<small>x${p.n} · worth ${fmt(p.val)}g</small></div><button class="sell" data-p="${esc(n)}">Sell</button></div>`; }
+  }
+  panel.innerHTML = h;
+}
+let trainBuilt = false;
+function renderTrain() {
+  if (!trainBuilt || !panel.querySelector("[data-tr]")) {
+    panel.innerHTML = Object.keys(TRAIN).map(k => `<div class="row"><div class="nm" id="tn-${k}"></div><button data-tr="${k}" id="tb-${k}"></button></div>`).join("");
+    trainBuilt = true;
+  }
+  for (const k in TRAIN) {
+    const u = TRAIN[k], l = S.tr[k], max = u.max && l >= u.max, c = trainCost(k);
+    $("tn-" + k).innerHTML = `${u.n} <span style="color:var(--dim);font-weight:500">Lv ${l}</span><small>${u.d(l)}${max ? "" : " → " + u.d(l + 1)}</small>`;
+    const b = $("tb-" + k); b.textContent = max ? "MAX" : fmt(c) + "g"; b.className = "sell" + (!max && S.gold < c ? " dis" : "");
+  }
+  dirty = false;
+}
+const trainCost = k => Math.floor(TRAIN[k].base * Math.pow(TRAIN[k].g, S.tr[k]));
+panel.onclick = e => {
+  const t = e.target.closest("button"); if (!t) return;
+  const d = t.dataset;
+  if (d.tr) { const u = TRAIN[d.tr], c = trainCost(d.tr); if ((u.max && S.tr[d.tr] >= u.max) || S.gold < c) return; S.gold -= c; S.tr[d.tr]++; recalc(); renderTrain(); }
+  else if (d.e) { equipFromBag(+d.e); renderPanel(); }
+  else if (d.s) { sellFromBag(+d.s); renderPanel(); }
+  else if (d.p) { const p = S.parts[d.p]; if (p) { gain(p.val); delete S.parts[d.p]; } renderPanel(); }
+  else if (d.a === "junk") { S.autoJunk = !S.autoJunk; if (S.autoJunk) { for (const it of S.bag.filter(x => x.rar <= 1)) sellItem(it); S.bag = S.bag.filter(x => x.rar > 1); } renderPanel(); }
+  else if (d.a === "sellbag") { for (const it of S.bag) sellItem(it); S.bag = []; renderPanel(); }
+  else if (d.a === "autoparts") { S.autoParts = !S.autoParts; renderPanel(); }
+  else if (d.a === "sellparts") { for (const n in S.parts) gain(S.parts[n].val); S.parts = {}; renderPanel(); }
+};
+$("spd").onclick = () => { const o = [1, 2, 4, 8, 16]; S.speed = o[(o.indexOf(S.speed) + 1) % o.length] || 1; $("spd").textContent = S.speed + "x"; };
+$("spd").textContent = S.speed + "x";
+
+function hud() {
+  $("gold").textContent = fmt(S.gold) + " gold";
+  const alive = mons.filter(m => !m.dead).length;
+  $("foes").textContent = alive ? alive + " foes left" : "Cleared";
+  $("hpfill").style.width = Math.max(0, hero.hp / ST.hp * 100) + "%";
+  $("hptxt").textContent = fmt(Math.max(0, hero.hp)) + " / " + fmt(ST.hp);
+  const now = Date.now(); goldWin = goldWin.filter(x => now - x[0] < 20000);
+  const gps = goldWin.reduce((a, x) => a + x[1], 0) / 20 * S.speed * 0 + goldWin.reduce((a, x) => a + x[1], 0) / 20;
+  if (goldWin.length) S.gpsAvg = S.gpsAvg ? S.gpsAvg * .9 + gps / Math.max(1, S.speed) * .1 : gps / Math.max(1, S.speed);
+  $("gps").textContent = "+" + fmt(gps) + "/s";
+}
+
+// ================= loop & save =================
+function save() { S.t = Date.now(); try { localStorage.setItem(SAVE_KEY, JSON.stringify(S)); } catch (e) {} }
+let last = performance.now(), acc = 0, uiT = 0, saveT = 0, panelT = 0;
+function frame(now) {
+  const dt = Math.min((now - last) / 1000, .25); last = now;
+  acc += dt * S.speed; let n = 0;
+  while (acc >= 1 / 30 && n < 480) { update(1 / 30); acc -= 1 / 30; n++; }
+  if (n >= 480) acc = 0;
+  draw(now);
+  uiT -= dt; if (uiT <= 0) { hud(); uiT = .15; }
+  panelT -= dt; if (panelT <= 0) { panelT = .4; if (tab === "train") renderTrain(); else if (dirty) renderPanel(); }
+  saveT += dt; if (saveT > 5) { save(); saveT = 0; }
+  requestAnimationFrame(frame);
+}
+document.addEventListener("visibilitychange", () => { if (document.hidden) save(); else { last = performance.now(); acc = 0; } });
+addEventListener("pagehide", save);
+
+(function boot() {
+  resize(); recalc(); hero.hp = ST.hp;
+  const away = Math.min((Date.now() - S.t) / 1000, 7200);
+  genFloor();
+  if (away > 60 && S.gpsAvg > 0) { const g = Math.floor(S.gpsAvg * away * .5); gain(g); setTimeout(() => say("Welcome back! Your hero earned " + fmt(g) + " gold while away.", "#ffc94a"), 400); }
+  renderPanel(); requestAnimationFrame(frame);
+})();
+window.__dbg = {S, get hero() { return hero; }, get mons() { return mons; }};
+</script>
+</body>
+</html>
