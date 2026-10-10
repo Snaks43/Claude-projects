@@ -15,7 +15,7 @@
   #hud .dim{font-size:12px;color:var(--dim);font-weight:600}
   #gold{color:var(--gold)}
   #spd{background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:6px 10px;font:inherit;font-size:13px;min-width:44px}
-  #hpbar{position:relative;height:16px;margin:0 12px 3px;background:#2a1217;border-radius:8px;overflow:hidden;border:1px solid #4a1f27}
+  #hpbar{position:relative;height:16px;margin:0 12px 6px;background:#2a1217;border-radius:8px;overflow:hidden;border:1px solid #4a1f27}
   #hpbar i{position:absolute;inset:0;width:100%;background:linear-gradient(#ef5a5f,#b92d34);transition:width .15s}
   #hpbar span{position:absolute;inset:0;text-align:center;font-size:11px;line-height:16px;font-weight:700;text-shadow:0 1px 2px #000}
   #stage{position:relative;flex:1 1 auto;min-height:0;overflow:hidden}
@@ -43,16 +43,18 @@
   .foot{text-align:center;font-size:11px;color:var(--dim);padding:6px}
   .foot a{color:var(--dim)}
 
-  #mpbar{position:relative;height:12px;margin:0 12px 6px;background:#10172e;border-radius:6px;overflow:hidden;border:1px solid #243566}
-  #mpbar i{position:absolute;inset:0;width:100%;background:linear-gradient(#5aa0ff,#2f63d0);transition:width .15s}
-  #mpbar span{position:absolute;inset:0;text-align:center;font-size:9px;line-height:12px;font-weight:700;text-shadow:0 1px 2px #000}
-  #tabs button{font-size:12px}
-  .cls{background:var(--panel2);border-left:4px solid var(--line);border-radius:10px;padding:8px 10px;margin-bottom:8px;display:flex;flex-direction:column;gap:2px}
-  .cls small{color:var(--dim);font-size:11px;line-height:1.35}
-  .row.col{display:block}
-  .lv{color:var(--dim);font-weight:500;font-size:12px;margin-left:4px}
-  .meter{height:5px;background:#0c0e18;border-radius:3px;margin-top:6px;overflow:hidden}
-  .meter i{display:block;height:100%}
+  #party{display:flex;gap:6px;padding:0 12px 6px}
+  .pc{flex:1 1 0;min-width:0;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:4px 6px 5px}
+  .pc.sel{border-color:var(--gold)} .pc.down{opacity:.45}
+  .pn{display:flex;align-items:center;gap:4px;font-size:11px;white-space:nowrap;overflow:hidden}
+  .pn i{width:8px;height:8px;border-radius:50%;flex:none}
+  .pn b{overflow:hidden;text-overflow:ellipsis}
+  .pn small{color:var(--dim);font-size:9px;overflow:hidden;text-overflow:ellipsis}
+  .bb{height:7px;border-radius:4px;margin-top:3px;background:#0c0e18;overflow:hidden}
+  .bb i{display:block;height:100%;width:100%}
+  .bb.hp i{background:linear-gradient(#ef5a5f,#b92d34)} .bb.mp{height:5px} .bb.mp i{background:linear-gradient(#5aa0ff,#2f63d0)}
+  .hint{font-size:11px;color:var(--dim);margin-bottom:8px;line-height:1.4}
+  #tabs button{font-size:11px}
 </style>
 </head>
 <body>
@@ -62,8 +64,7 @@
     <div style="text-align:center"><div class="big" id="gold">0g</div><div class="dim" id="exp"></div></div>
     <button id="spd">1x</button>
   </div>
-  <div id="hpbar"><i id="hpfill"></i><span id="hptxt"></span></div>
-  <div id="mpbar"><i id="mpfill"></i><span id="mptxt"></span></div>
+  <div id="party"></div>
   <div id="stage"><canvas id="c"></canvas><div id="log"></div></div>
   <div id="tabs"></div>
   <div id="panel"></div>
@@ -189,35 +190,67 @@ const EXTRA = {
   fort: {n: "Fortune",   d: l => "+" + l * 8 + "% gold",        base: 25, g: 1.3},
   luck: {n: "Scavenger", d: l => "+" + l * 4 + "% drop chance", base: 30, g: 1.3},
 };
-const MAX_UP = 10;
+const RANK = {Knight: 0, Berserker: 1, Duelist: 2, Novice: 2, Lancer: 3, Battlemage: 3, Archer: 4, Mage: 5};
+const MAX_PARTY = 4;
+const GATE = [0, 25, 45, 65, 85];            // first floor each rarity can drop
+const NAMES = ["Aria", "Brom", "Cael", "Dara", "Eryn", "Fenn", "Garr", "Hale", "Isla", "Joren", "Kira", "Lund", "Mara", "Nox", "Orin", "Pell", "Quin", "Rhea", "Sorn", "Tess"];
+// starter kits for wandering recruits
+const ARCH = [
+  {k: "Guardian",    main: "sword",      off: "shield", foc: ["str", "vit"]},
+  {k: "Warrior",     main: "greatsword", off: null,     foc: ["str", "vit"]},
+  {k: "Ranger",      main: "bow",        off: null,     foc: ["dex", "vit"]},
+  {k: "Rogue",       main: "dagger",     off: "dagger", foc: ["dex", "str"]},
+  {k: "Sorcerer",    main: "staff",      off: null,     foc: ["int", "vit"]},
+  {k: "Spellsword",  main: "sword",      off: "wand",   foc: ["str", "int"]},
+  {k: "Lancer",      main: "spear",      off: null,     foc: ["str", "dex"]},
+  {k: "Crossbowman", main: "crossbow",   off: "shield", foc: ["dex", "vit"]},
+];
+const SCALE = [{hp: 1, atk: 1, tier: 0}];
+function floorScale(f) { // enemy strength compounds faster every 5 floors
+  while (SCALE.length < f) {
+    const k = SCALE.length, tier = Math.floor((k - 1) / 5), p = SCALE[k - 1];
+    SCALE.push({hp: p.hp * (1.115 + .007 * tier), atk: p.atk * (1.075 + .005 * tier), tier: Math.floor(k / 5)});
+  }
+  return SCALE[f - 1];
+}
 
 // ================= state =================
 const SAVE_KEY = "delvebound.v1";
-let S = {gold: 0, exp: 0, floor: 1, best: 1, kills: 0, eq: {}, bag: [], parts: {}, attr: {str: 0, dex: 0, int: 0, vit: 0}, tr: {fort: 0, luck: 0},
-         sk: {}, autoJunk: true, autoParts: false, autoEquip: true, autoSpend: false, autoSmith: true, smithGap: 0, gpsAvg: 0, xpsAvg: 0, t: Date.now(), speed: 1, nid: 1};
+const newMember = (id, name, arch) => ({id, name, arch: arch || null, eq: {}, attr: {str: 0, dex: 0, int: 0, vit: 0}, sk: {}});
+let S = {gold: 0, exp: 0, floor: 1, best: 1, kills: 0, bag: [], parts: {}, tr: {fort: 0, luck: 0}, party: [], sel: 0, mid: 2,
+         autoJunk: true, autoParts: false, autoEquip: true, autoSpend: false, autoSmith: true, autoRecruit: true, smithGap: 0, gpsAvg: 0, xpsAvg: 0, t: Date.now(), speed: 1, nid: 1};
 try {
   const d = JSON.parse(localStorage.getItem(SAVE_KEY));
   if (d) {
     S = Object.assign(S, d);
-    S.attr = Object.assign({str: 0, dex: 0, int: 0, vit: 0}, d.attr);
     S.tr = {fort: (d.tr && d.tr.fort) || 0, luck: (d.tr && d.tr.luck) || 0};
-    S.sk = d.sk || {};
-    for (const it of Object.values(S.eq).concat(S.bag)) { if (!it) continue; if (!it.bs) it.bs = Object.assign({}, it.s); if (it.up == null) it.up = 0; }
+    if (!S.party || !S.party.length) { // migrate single-hero saves
+      const m = newMember(1, "Hero"); m.eq = d.eq || {}; m.attr = Object.assign(m.attr, d.attr); m.sk = d.sk || {}; S.party = [m];
+    }
+    delete S.eq; delete S.attr; delete S.sk;
+    for (const m of S.party) { m.attr = Object.assign({str: 0, dex: 0, int: 0, vit: 0}, m.attr); m.sk = m.sk || {}; m.eq = m.eq || {}; }
+    const all = S.bag.slice(); for (const m of S.party) all.push(...Object.values(m.eq));
+    for (const it of all) { if (!it) continue; if (!it.bs) it.bs = Object.assign({}, it.s); if (it.up == null) it.up = 0; }
   }
 } catch (e) {}
+if (!S.party.length) S.party = [newMember(1, "Hero")];
 
 let grid, rooms, seen = new Uint8Array(MW * MH), vis = new Uint8Array(MW * MH);
-let mons = [], projs = [], fxs = [], chest = null, smith = null, smithOpen = false;
-let hero = {x: 0, y: 0, hp: 100, mp: 30, cd: 0, ang: 0, swing: 0, tgt: null, goal: null, anim: 0, buffs: {}, skcd: {}, gcd: 0, shield: 0};
-let ST = {}, ATT = {str: 5, dex: 5, int: 5, vit: 5}, SH = {str: .33, dex: .33, int: .33}, curCls = "Novice", booted = false;
+let mons = [], projs = [], fxs = [], chest = null, smith = null, smithOpen = false, camp = null, campOpen = false;
+let heroes = [], lead = null, goal = null, wipeFlag = false, booted = false;
 let clearT = 0, thinkT = 0, camX = 0, camY = 0, W = 300, H = 300, dpr = 1, ts = 36, goldWin = [], xpWin = [], dirty = true;
 const dist = new Int16Array(MW * MH), par = new Int16Array(MW * MH), que = new Int16Array(MW * MH);
-let srcIdx = 0;
+const NEUTRAL = {SH: {str: .34, dex: .33, int: .33}};
+function mkHero(m) {
+  return {m, x: 0, y: 0, hp: 1, mp: 1, cd: 0, ang: 0, swing: 0, tgt: null, buffs: {}, skcd: {}, gcd: 0, shield: 0, down: false, anim: 0,
+    ST: {}, ATT: {str: 5, dex: 5, int: 5, vit: 5}, SH: {str: .34, dex: .33, int: .33}, cls: "Novice",
+    dist: new Int16Array(MW * MH), par: new Int16Array(MW * MH)};
+}
 
 // ================= items & equipment =================
+const RW = [[60, 0], [20, .08], [8, .06], [2, .05], [.5, .05]]; // base weight, growth per floor past the gate
 function rollRarity(f, boost) {
-  const w = [60 / (1 + .03 * f), 28 * (1 + .06 * f), 10 * (1 + .12 * f), 2.5 * (1 + .2 * f), .4 * (1 + .25 * f)];
-  for (let i = 1; i < 5; i++) w[i] *= 1 + boost * i;
+  const w = RW.map(([b, g], i) => f < GATE[i] ? 0 : (i === 0 ? b / (1 + .01 * f) : b * (1 + g * (f - GATE[i])) * (1 + boost * i)));
   let r = Math.random() * w.reduce((a, b) => a + b, 0);
   for (let i = 0; i < 5; i++) if ((r -= w[i]) <= 0) return i;
   return 0;
@@ -227,18 +260,21 @@ function pickSlot() {
   for (let i = 0; i < SLOTS.length; i++) if ((r -= SLOT_W[i]) <= 0) return SLOTS[i];
   return "helm";
 }
-function makeItem(f, slot, boost) {
-  slot = slot || pickSlot();
-  const rar = rollRarity(f, boost || 0);
+function makeItem(f, slot, boost, force) {
+  force = force || {};
+  slot = force.slot || slot || pickSlot();
+  const rar = force.rar != null ? force.rar : rollRarity(f, boost || 0);
   const b = (4 + 2.4 * f) * RAR[rar].m * rf(.85, 1.15);
   const s = {}; let name, wt = null, kind = null;
-  if (slot === "weapon") { wt = pick(Object.keys(WT)); s.atk = b * WT[wt].am; name = WT[wt].nm; }
-  else if (slot === "offhand") {
-    if (Math.random() < .3) { // a one-handed weapon can also be carried in the off hand
-      const ones = Object.keys(WT).filter(k => WT[k].h === 1);
-      wt = pick(ones); slot = "weapon"; s.atk = b * WT[wt].am; name = WT[wt].nm;
-    } else if (Math.random() < .6) { kind = "shield"; name = pick(BASES.shield); s.def = b * 1.0; s.hp = b * 1.5; s.block = 6 + rar * 3; }
-    else { kind = "focus"; name = pick(BASES.focus); s.int = b * .22; s.mp = b * 1.6; s.mpr = .2 + rar * .25; }
+  let oneHand = false;
+  if (slot === "offhand" && !force.kind && Math.random() < .3) { slot = "weapon"; oneHand = true; } // a one-handed weapon can also be carried in the off hand
+  if (slot === "weapon") {
+    wt = force.wt || pick(Object.keys(WT).filter(k => !oneHand || WT[k].h === 1));
+    s.atk = b * WT[wt].am; name = WT[wt].nm;
+  } else if (slot === "offhand") {
+    kind = force.kind || (Math.random() < .6 ? "shield" : "focus");
+    if (kind === "shield") { name = pick(BASES.shield); s.def = b * 1.0; s.hp = b * 1.5; s.block = 6 + rar * 3; }
+    else { name = pick(BASES.focus); s.int = b * .22; s.mp = b * 1.6; s.mpr = .2 + rar * .25; }
   } else {
     name = pick(BASES[slot]);
     if (slot === "helm") { s.def = b * .5; s.hp = b * 2; }
@@ -262,9 +298,9 @@ function fitOf(w, sh) {
   const share = w.t === "melee" ? sh.str : w.t === "ranged" ? sh.dex : w.t === "magic" ? sh.int : (sh.str + sh.dex) / 2;
   return .55 + 1.2 * share;
 }
-// How much the hero wants this item, given their current stat distribution
-function score(it) {
-  const s = it.s, sh = SH; let v = 0;
+// How much a hero wants this item, given their stat distribution
+function score(it, h) {
+  const s = it.s, sh = (h || NEUTRAL).SH; let v = 0;
   if (it.wt) v += (s.atk || 0) * 3 * WT[it.wt].as * fitOf(WT[it.wt], sh);
   else v += (s.atk || 0) * 3;
   v += (s.def || 0) * 2 + (s.hp || 0) * .3 + (s.crit || 0) * 2 + (s.aspd || 0) * 1.2 + (s.regen || 0) * 4 + (s.block || 0) * 3;
@@ -283,46 +319,59 @@ function statTxt(it) {
 function sellItem(it) { gain(itemValue(it)); }
 function gain(g) { S.gold += g; goldWin.push([Date.now(), g]); }
 function gainXp(x) { S.exp += x; xpWin.push([Date.now(), x]); }
+const allEq = () => { const a = []; for (const m of S.party) for (const it of Object.values(m.eq)) if (it) a.push(it); return a; };
 
-function loadoutScore(m, o) { return (m ? score(m) : 0) + (o ? (o.wt ? .6 : 1) * score(o) : 0); }
+function loadoutScore(m, o, h) { return (m ? score(m, h) : 0) + (o ? (o.wt ? .6 : 1) * score(o, h) : 0); }
 function autoEquip() {
-  recalc();
-  const cur = S.eq, pool = Object.values(cur).filter(Boolean).concat(S.bag), before = new Set(Object.values(cur).filter(Boolean).map(i => i.id));
+  for (const h of heroes) recalcH(h, true);
+  const eqNow = allEq(), pool = eqNow.concat(S.bag);
+  const prev = heroes.map(h => new Set(Object.values(h.m.eq).filter(Boolean).map(i => i.id)));
   if (S.autoEquip) {
-    const eq = {};
-    for (const sl of ["helm", "armor", "boots", "ring", "amulet"]) {
-      let b = cur[sl] || null, bs = b ? score(b) * 1.04 : -1;
-      for (const it of pool) if (it.slot === sl && score(it) > bs) { bs = score(it); b = it; }
-      if (b) eq[sl] = b;
-    }
-    const mains = pool.filter(i => i.slot === "weapon"), offs = pool.filter(i => i.slot === "offhand");
-    const curValid = !(cur.weapon && handsOf(cur.weapon) === 2 && cur.offhand);
-    let best = curValid ? loadoutScore(cur.weapon, cur.offhand) * 1.04 : -1, bm = curValid ? cur.weapon : null, bo = curValid ? cur.offhand : null;
-    const consider = (m, o) => { const sc = loadoutScore(m, o); if (sc > best) { best = sc; bm = m; bo = o; } };
-    for (const m of mains) {
-      consider(m, null);
-      if (handsOf(m) === 1) {
-        for (const o of offs) consider(m, o);
-        for (const o of mains) if (o !== m && handsOf(o) === 1) consider(m, o);
+    const taken = new Set(), newEq = [];
+    for (const h of heroes) {
+      const cur = h.m.eq, eq = {};
+      for (const sl of ["helm", "armor", "boots", "ring", "amulet"]) {
+        let b = null, bs = -1;
+        for (const it of pool) {
+          if (it.slot !== sl || taken.has(it.id)) continue;
+          const sc = score(it, h) * (cur[sl] && cur[sl].id === it.id ? 1.04 : 1);
+          if (sc > bs) { bs = sc; b = it; }
+        }
+        if (b) { eq[sl] = b; taken.add(b.id); }
       }
+      const mains = pool.filter(i => i.slot === "weapon" && !taken.has(i.id)), offs = pool.filter(i => i.slot === "offhand" && !taken.has(i.id));
+      let best = -1, bm = null, bo = null;
+      const consider = (m, o) => {
+        let sc = loadoutScore(m, o, h);
+        if (cur.weapon && m && cur.weapon.id === m.id && ((cur.offhand && o && cur.offhand.id === o.id) || (!cur.offhand && !o))) sc *= 1.04;
+        if (sc > best) { best = sc; bm = m; bo = o; }
+      };
+      for (const m of mains) {
+        consider(m, null);
+        if (handsOf(m) === 1) {
+          for (const o of offs) consider(m, o);
+          for (const o of mains) if (o !== m && handsOf(o) === 1) consider(m, o);
+        }
+      }
+      if (bm) { eq.weapon = bm; taken.add(bm.id); } if (bo) { eq.offhand = bo; taken.add(bo.id); }
+      newEq.push(eq);
     }
-    if (bm) eq.weapon = bm; if (bo) eq.offhand = bo;
-    S.eq = eq;
-    const used = new Set(Object.values(eq).map(i => i.id));
-    S.bag = pool.filter(i => !used.has(i.id));
+    heroes.forEach((h, i) => { h.m.eq = newEq[i]; });
+    S.bag = pool.filter(i => !taken.has(i.id));
   }
   if (S.autoJunk) { const keep = []; for (const it of S.bag) { if (it.rar <= 1) sellItem(it); else keep.push(it); } S.bag = keep; }
-  if (S.bag.length > BAG) { S.bag.sort((a, b) => score(b) - score(a)); while (S.bag.length > BAG) sellItem(S.bag.pop()); }
-  for (const it of Object.values(S.eq)) if (it && !before.has(it.id) && booted) say("Equipped " + it.name, RAR[it.rar].c);
-  recalc(); dirty = true;
+  if (S.bag.length > BAG) { S.bag.sort((a, b) => score(b, heroes[0]) - score(a, heroes[0])); while (S.bag.length > BAG) sellItem(S.bag.pop()); }
+  heroes.forEach((h, i) => { for (const it of Object.values(h.m.eq)) if (it && !prev[i].has(it.id) && booted) say(h.m.name + " equipped " + it.name, RAR[it.rar].c); });
+  for (const h of heroes) recalcH(h, true);
+  dirty = true;
 }
 function pickup(it) {
   S.bag.push(it); autoEquip();
   if (it.rar >= 2 && S.bag.includes(it)) say("Found " + it.name, RAR[it.rar].c);
 }
-function manualEquip(id, where) {
+function manualEquip(h, id, where) {
   const i = S.bag.findIndex(x => x.id === id); if (i < 0) return;
-  const it = S.bag.splice(i, 1)[0], eq = S.eq;
+  const it = S.bag.splice(i, 1)[0], eq = h.m.eq;
   const put = sl => { if (eq[sl]) S.bag.push(eq[sl]); eq[sl] = it; };
   const dropMain2h = () => { if (eq.weapon && handsOf(eq.weapon) === 2) { S.bag.push(eq.weapon); delete eq.weapon; } };
   if (it.slot === "weapon") {
@@ -331,7 +380,7 @@ function manualEquip(id, where) {
     else put("weapon");
   } else if (it.slot === "offhand") { dropMain2h(); put("offhand"); }
   else put(it.slot);
-  recalc(); dirty = true;
+  recalcH(h); dirty = true;
 }
 function sellFromBag(id) {
   const i = S.bag.findIndex(x => x.id === id); if (i < 0) return;
@@ -343,27 +392,36 @@ function addPart(name, v) {
   const p = S.parts[name] || (S.parts[name] = {n: 0, val: 0});
   p.n++; p.val += val; dirty = true;
 }
+const partCount = () => Object.values(S.parts).reduce((a, p) => a + p.n, 0);
+function spendParts(k) { // consume the cheapest parts first
+  const names = Object.keys(S.parts).sort((a, b) => S.parts[a].val / S.parts[a].n - S.parts[b].val / S.parts[b].n);
+  for (const n of names) {
+    const p = S.parts[n], t = Math.min(k, p.n); p.val = p.val * (p.n - t) / p.n; p.n -= t; k -= t;
+    if (p.n <= 0) delete S.parts[n]; if (k <= 0) break;
+  }
+}
 
-// ----- blacksmith -----
+// ----- blacksmith: gold, plus monster parts after +5; no cap -----
 const upCost = it => Math.floor(30 * (1 + it.ilvl * .5) * (1 + it.rar * .4) * Math.pow(1.3, it.up));
+const upParts = it => it.up >= 5 ? it.up - 4 : 0;
+const canUpgrade = it => S.gold >= upCost(it) && partCount() >= upParts(it);
 function upgradeItem(it) {
-  if (it.up >= MAX_UP) return false;
-  const c = upCost(it); if (S.gold < c) return false;
-  S.gold -= c; it.up++;
+  if (!canUpgrade(it)) return false;
+  S.gold -= upCost(it); spendParts(upParts(it)); it.up++;
   for (const k in it.bs) it.s[k] = Math.round(it.bs[k] * (1 + .1 * it.up) * 10) / 10;
-  recalc(); dirty = true; return true;
+  for (const h of heroes) recalcH(h); dirty = true; return true;
 }
 function autoUpgrade() {
   let n = 0;
-  for (let i = 0; i < 200; i++) {
-    const eqs = Object.values(S.eq).filter(it => it && it.up < MAX_UP).sort((a, b) => upCost(a) - upCost(b));
-    if (!eqs.length || upCost(eqs[0]) > S.gold) break;
-    upgradeItem(eqs[0]); n++;
+  for (let i = 0; i < 300; i++) {
+    const cand = allEq().filter(canUpgrade).sort((a, b) => upCost(a) - upCost(b));
+    if (!cand.length) break;
+    upgradeItem(cand[0]); n++;
   }
   return n;
 }
 
-// ----- class & stats -----
+// ----- class & stats (per hero) -----
 function detectClass(m, o) {
   if (!m) return "Novice";
   const w = WT[m.wt], ow = o && o.wt ? WT[o.wt] : null;
@@ -379,9 +437,10 @@ function detectClass(m, o) {
   if (o && o.kind === "focus") return w.t === "magic" ? "Mage" : w.t === "melee" ? "Battlemage" : "Archer";
   return w.t === "melee" ? "Duelist" : w.t === "magic" ? "Mage" : "Archer";
 }
-function recalc() {
-  const eq = S.eq, main = eq.weapon, off = main && handsOf(main) === 2 ? null : eq.offhand;
-  const A = {str: 5 + S.attr.str, dex: 5 + S.attr.dex, int: 5 + S.attr.int, vit: 5 + S.attr.vit};
+const roleOf = h => { const r = RANK[h.cls]; return r <= 2 ? "front" : r === 3 ? "mid" : "back"; };
+function recalcH(h, quiet) {
+  const eq = h.m.eq, main = eq.weapon, off = main && handsOf(main) === 2 ? null : eq.offhand;
+  const A = {str: 5 + h.m.attr.str, dex: 5 + h.m.attr.dex, int: 5 + h.m.attr.int, vit: 5 + h.m.attr.vit};
   let flat = 4, def = 0, hp = 100, crit = 5, aspd = 0, regen = .5, block = 0, mp = 30, mpr = 1.5;
   for (const it of [main, off, eq.helm, eq.armor, eq.boots, eq.ring, eq.amulet]) {
     if (!it) continue; const s = it.s;
@@ -395,28 +454,68 @@ function recalc() {
   atk *= 1 + .03 * attrFor;
   crit += .2 * A.dex; aspd += .5 * A.dex; hp += 6 * A.vit; def += .4 * A.vit; mp += 6 * A.int; mpr += .12 * A.int;
   const cls = detectClass(main, off), P = PASSIVE[cls] || {};
-  const oldHp = ST.hp || hp, oldMp = ST.mp || mp;
-  ST = {
+  const oldHp = h.ST.hp || hp, oldMp = h.ST.mp || mp;
+  h.ST = {
     atk: atk * (P.atk || 1), def: def * (P.def || 1), hp: hp * (P.hp || 1), crit: crit + (P.crit || 0), regen, block: block + (P.block || 0),
     aspd: w.as * (off && off.wt ? 1.3 : 1) * (1 + aspd / 100) * (P.aspd || 1), mp: mp * (P.mp || 1), mpr: mpr * (P.mpr || 1),
     rng: w.rng + (P.rng || 0), ranged: !!w.ranged, proj: w.proj || null, cls, wt: main ? main.wt : null,
   };
-  ATT = A; const tot = A.str + A.dex + A.int; SH = {str: A.str / tot, dex: A.dex / tot, int: A.int / tot};
-  hero.hp = Math.min(ST.hp, hero.hp + Math.max(0, ST.hp - oldHp));
-  hero.mp = Math.min(ST.mp, hero.mp + Math.max(0, ST.mp - oldMp));
-  if (cls !== curCls) { const was = curCls; curCls = cls; if (booted) say("Class changed: " + was + " → " + cls, CLASSES[cls].col); }
+  h.ATT = A; const tot = A.str + A.dex + A.int; h.SH = {str: A.str / tot, dex: A.dex / tot, int: A.int / tot};
+  h.hp = Math.min(h.ST.hp, h.hp + Math.max(0, h.ST.hp - oldHp));
+  h.mp = Math.min(h.ST.mp, h.mp + Math.max(0, h.ST.mp - oldMp));
+  if (cls !== h.cls) { const was = h.cls; h.cls = cls; if (booted && !quiet) say(h.m.name + ": " + was + " → " + cls, CLASSES[cls].col); else if (booted) say(h.m.name + " is now a " + cls, CLASSES[cls].col); buildParty(); }
   dirty = true;
 }
-const attrCost = k => Math.floor(10 * Math.pow(1.17, S.attr[k]));
+function recalc() { for (const h of heroes) recalcH(h); }
+function syncHeroes() {
+  const old = new Map(heroes.map(h => [h.m.id, h]));
+  heroes = S.party.map(m => old.get(m.id) || mkHero(m));
+  for (const h of heroes) recalcH(h, true);
+  if (S.sel >= heroes.length) S.sel = 0;
+  buildParty();
+}
+const curH = () => heroes[Math.min(S.sel, heroes.length - 1)];
+const attrCost = (h, k) => Math.floor(10 * Math.pow(1.17, h.m.attr[k]));
 const extraCost = k => Math.floor(EXTRA[k].base * Math.pow(EXTRA[k].g, S.tr[k]));
-function buyAttr(k) { const c = attrCost(k); if (S.exp < c) return false; S.exp -= c; S.attr[k]++; autoEquip(); return true; }
+function buyAttr(h, k) { const c = attrCost(h, k); if (S.exp < c) return false; S.exp -= c; h.m.attr[k]++; autoEquip(); return true; }
 function buyExtra(k) { const c = extraCost(k); if (S.exp < c) return false; S.exp -= c; S.tr[k]++; dirty = true; return true; }
 function autoSpend() {
-  for (let i = 0; i < 25; i++) {
-    const top = ["str", "dex", "int"].sort((a, b) => ATT[b] - ATT[a])[0];
-    const k = ATT.vit < ATT[top] * .7 ? "vit" : top;
-    if (!buyAttr(k)) break;
+  for (let i = 0; i < 30; i++) {
+    const h = heroes[i % heroes.length], A = h.ATT;
+    const top = ["str", "dex", "int"].sort((a, b) => A[b] - A[a])[0];
+    const k = A.vit < A[top] * .7 ? "vit" : top;
+    if (!buyAttr(h, k)) { if (i >= heroes.length) break; }
   }
+}
+
+// ----- recruits -----
+function genCandidate(f) {
+  const a = pick(ARCH);
+  return {name: pick(NAMES), arch: a, willing: Math.random() < .65};
+}
+function recruit(c) {
+  if (S.party.length >= MAX_PARTY) return false;
+  const f = S.floor, m = newMember(S.mid++, c.name, c.arch.k), pts = Math.floor(f * 1.2) + 4;
+  const [p1, p2] = c.arch.foc;
+  m.attr[p1] += Math.round(pts * .6); m.attr[p2] += Math.round(pts * .3); m.attr.vit += Math.round(pts * .1);
+  const kit = c.arch;
+  S.bag.push(makeItem(f, "weapon", 0, {slot: "weapon", wt: kit.main, rar: Math.min(1, rollRarity(f, 0))}));
+  if (kit.off === "shield") S.bag.push(makeItem(f, "offhand", 0, {slot: "offhand", kind: "shield", rar: 0}));
+  else if (kit.off) S.bag.push(makeItem(f, "weapon", 0, {slot: "weapon", wt: kit.off, rar: 0}));
+  S.bag.push(makeItem(f, "armor", 0, {rar: 0}), makeItem(f, "helm", 0, {rar: 0}));
+  S.party.push(m); c.took = true;
+  syncHeroes();
+  const h = heroes[heroes.length - 1], lh = lead || heroes[0];
+  h.x = lh.x; h.y = lh.y; h.hp = h.ST.hp; h.mp = h.ST.mp;
+  autoEquip();
+  say(c.name + " the " + c.arch.k + " joined the party!", "#8ad0ff");
+  return true;
+}
+function dismiss(idx) {
+  if (idx <= 0 || idx >= S.party.length) return;
+  const m = S.party.splice(idx, 1)[0];
+  for (const it of Object.values(m.eq)) if (it) S.bag.push(it);
+  syncHeroes(); autoEquip(); dirty = true;
 }
 
 // ================= dungeon =================
@@ -436,9 +535,9 @@ function genFloor() {
     if (Math.random() < .6) carve(rooms[0], rooms[rooms.length - 1]);
     break;
   }
-  seen.fill(0); vis.fill(0); mons = []; projs = []; fxs = []; chest = null; smith = null; smithOpen = false;
+  seen.fill(0); vis.fill(0); mons = []; projs = []; fxs = []; chest = null; smith = null; smithOpen = false; camp = null; campOpen = false;
   const start = rooms[0];
-  bfs(start.cx, start.cy);
+  bfs(start.cx, start.cy, dist, par);
   let boss = rooms[1], bd = -1;
   for (const r of rooms) { const d = dist[r.cy * MW + r.cx]; if (r !== start && d > bd) { bd = d; boss = r; } }
   boss.kind = "boss"; start.kind = "start"; start.visited = true;
@@ -453,9 +552,16 @@ function genFloor() {
     const sr = pick(cand); sr.kind = "smith"; S.smithGap = 0;
     smith = {x: sr.cx + .5, y: sr.cy + .5, used: false, room: sr};
   }
+  cand = rooms.filter(r => r.kind === "mon");
+  if (f % 10 === 0 && S.party.length < MAX_PARTY && cand.length > 2) { // every 10 floors: a camp of wanderers
+    const cr = pick(cand); cr.kind = "camp";
+    const cands = []; for (let i = 0; i < Math.min(MAX_PARTY - S.party.length, ri(1, 2)); i++) cands.push(genCandidate(f));
+    camp = {x: cr.cx + .5, y: cr.cy + .5, used: false, room: cr, cands};
+  }
+  const pm = 1 + .3 * (S.party.length - 1);
   for (const r of rooms) {
     if (r.kind === "mon") {
-      const n = Math.min(7, 2 + ri(0, 2 + Math.floor(f / 5)));
+      const n = Math.min(10, Math.round((2 + ri(0, 2 + Math.floor(f / 5))) * pm));
       for (let i = 0; i < n; i++) spawnIn(r);
     } else if (r.kind === "boss") {
       const bi = (f - 1) % 10, cyc = Math.floor((f - 1) / 10), nm = BOSSES[bi][0] + (cyc ? " " + ["", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X"][Math.min(cyc, 9)] : "");
@@ -466,11 +572,12 @@ function genFloor() {
       for (let i = 0; i < 2; i++) spawnIn(r);
     }
   }
-  hero.x = start.cx + .5; hero.y = start.cy + .5; hero.tgt = null; hero.goal = null; hero.cd = .5;
-  camX = hero.x; camY = hero.y; clearT = 0;
+  const OFF = [[0, 0], [-.9, .5], [-.9, -.5], [-1.5, 0]];
+  heroes.forEach((h, i) => { h.x = start.cx + .5 + OFF[i][0]; h.y = start.cy + .5 + OFF[i][1]; h.tgt = null; h.cd = .5; });
+  goal = null; lead = null; camX = start.cx + .5; camY = start.cy + .5; clearT = 0;
   think(true);
-  $("floor").textContent = "Floor " + f;
-  say("Floor " + f + (chest ? " - you sense treasure nearby" : "") + (smith ? " - a forge glows in the dark" : ""), "#ffc94a");
+  $("floor").textContent = "Floor " + f + " · Tier " + floorScale(f).tier;
+  say("Floor " + f + (chest ? " - you sense treasure nearby" : "") + (smith ? " - a forge glows in the dark" : "") + (camp ? " - voices by a campfire" : ""), "#ffc94a");
 }
 function carve(a, b) {
   const hor = (x1, x2, y) => { for (let x = Math.min(x1, x2); x <= Math.max(x1, x2); x++) grid[y * MW + x] = 1; };
@@ -486,9 +593,9 @@ function spawnIn(r) {
   mons.push(mk(t, r.x + 1 + Math.random() * (r.w - 2), r.y + 1 + Math.random() * (r.h - 2), elite, false));
 }
 function mk(t, x, y, elite, boss) {
-  const f = S.floor, hs = Math.pow(1.13, f - 1), as = Math.pow(1.09, f - 1);
-  let hp = 18 * t.hp * hs, atk = 4 * t.atk * as, g = t.g * (4 + 2 * f) * Math.pow(1.08, f), r = t.r;
-  let xp = (3 + 1.4 * f) * t.g * Math.pow(1.07, f) * .6;
+  const f = S.floor, sc = floorScale(f), hs = sc.hp, as = sc.atk, tb = 1 + .12 * sc.tier;
+  let hp = 18 * t.hp * hs, atk = 4 * t.atk * as, g = t.g * (4 + 2 * f) * Math.pow(1.08, f) * tb, r = t.r;
+  let xp = (3 + 1.4 * f) * t.g * Math.pow(1.07, f) * .6 * tb;
   if (elite) { hp *= 2.6; atk *= 1.5; g *= 3; r *= 1.25; xp *= 3; }
   if (boss) { hp *= 14; atk *= 2.2; g *= 25; r *= 1.9; xp *= 20; }
   return {t, x, y, name: (elite ? "Elite " : "") + t.name, shape: boss ? "boss" : t.shape, col: t.col, r, hp, max: hp, atk, spd: t.spd * (boss ? .8 : 1),
@@ -496,14 +603,15 @@ function mk(t, x, y, elite, boss) {
     parts: t.parts, ang: 0, bossT: 4, summoned: false, stun: 0, slow: 0, dots: []};
 }
 // ================= pathing =================
-function bfs(sx, sy) {
-  dist.fill(-1); let h = 0, t = 0; const s = sy * MW + sx; dist[s] = 0; par[s] = -1; que[t++] = s; srcIdx = s;
+function bfs(sx, sy, D, P) {
+  D = D || dist; P = P || par;
+  D.fill(-1); let h = 0, t = 0; const s = sy * MW + sx; D[s] = 0; P[s] = -1; que[t++] = s;
   while (h < t) {
-    const c = que[h++], cx = c % MW, cy = (c / MW) | 0, d = dist[c] + 1;
+    const c = que[h++], cx = c % MW, cy = (c / MW) | 0, d = D[c] + 1;
     for (const [dx, dy] of K4) {
       const nx = cx + dx, ny = cy + dy; if (nx < 0 || ny < 0 || nx >= MW || ny >= MH) continue;
-      const n = ny * MW + nx; if (!grid[n] || dist[n] >= 0) continue;
-      dist[n] = d; par[n] = c; que[t++] = n;
+      const n = ny * MW + nx; if (!grid[n] || D[n] >= 0) continue;
+      D[n] = d; P[n] = c; que[t++] = n;
     }
   }
 }
@@ -513,10 +621,10 @@ function los(ax, ay, bx, by) {
   for (let i = 1; i < n; i++) if (solid(ax + (bx - ax) * i / n, ay + (by - ay) * i / n)) return false;
   return true;
 }
-function nextTileTo(tx, ty) {
-  let c = ty * MW + tx; if (dist[c] < 0) return null;
-  if (dist[c] === 0) return [tx + .5, ty + .5];
-  while (dist[c] > 1) c = par[c];
+function nextTileTo(D, P, tx, ty) {
+  let c = ty * MW + tx; if (D[c] < 0) return null;
+  if (D[c] === 0) return [tx + .5, ty + .5];
+  while (D[c] > 1) c = P[c];
   return [(c % MW) + .5, ((c / MW) | 0) + .5];
 }
 function stepOn(e, tx, ty, sp, dt) {
@@ -530,42 +638,67 @@ function slide(e, dx, dy) { // direct move with wall collision
 
 
 // ================= AI think =================
-function think(first) {
-  const hx = Math.floor(hero.x), hy = Math.floor(hero.y);
-  bfs(hx, hy);
-  vis.fill(0);
-  for (let i = 0; i < MW * MH; i++) if (dist[i] >= 0 && dist[i] <= 8) { vis[i] = 1; seen[i] = 1; }
-  for (const r of rooms) if (!r.visited && hx >= r.x && hx < r.x + r.w && hy >= r.y && hy < r.y + r.h) {
-    r.visited = true;
-    if (r.kind === "treasure") say("A treasure room!", "#ffc94a");
-    if (r.kind === "smith") say("A blacksmith's forge!", "#ff9a4a");
-    if (r.kind === "boss") say("The boss lair...", "#e5484d");
+const alive = () => heroes.filter(h => !h.down);
+function pickLead() { // the sturdiest frontliner walks first
+  let b = null;
+  for (const h of heroes) {
+    if (h.down) continue;
+    if (!b || RANK[h.cls] < RANK[b.cls] || (RANK[h.cls] === RANK[b.cls] && h.ST.hp > b.ST.hp)) b = h;
   }
-  let tgt = null, bd = 1e9;
+  return b;
+}
+const tileOf = o => Math.floor(o.y) * MW + Math.floor(o.x);
+function think(first) {
+  lead = pickLead(); if (!lead) return;
+  vis.fill(0);
+  for (const h of heroes) {
+    if (h.down) continue;
+    bfs(Math.floor(h.x), Math.floor(h.y), h.dist, h.par);
+    for (let i = 0; i < MW * MH; i++) if (h.dist[i] >= 0 && h.dist[i] <= 8) { vis[i] = 1; seen[i] = 1; }
+    const hx = Math.floor(h.x), hy = Math.floor(h.y);
+    for (const r of rooms) if (!r.visited && hx >= r.x && hx < r.x + r.w && hy >= r.y && hy < r.y + r.h) {
+      r.visited = true;
+      if (r.kind === "treasure") say("A treasure room!", "#ffc94a");
+      if (r.kind === "smith") say("A blacksmith's forge!", "#ff9a4a");
+      if (r.kind === "camp") say("A campfire. Someone is there...", "#8ad0ff");
+      if (r.kind === "boss") say("The boss lair...", "#e5484d");
+    }
+  }
+  const al = alive();
   for (const m of mons) {
     if (m.dead) continue;
-    const d = dist[Math.floor(m.y) * MW + Math.floor(m.x)];
-    if (d >= 0 && d <= 9) m.awake = true;
-    if (m.awake && d >= 0 && d < bd) { bd = d; tgt = m; }
+    for (const h of al) { const d = h.dist[tileOf(m)]; if (d >= 0 && d <= 9) { m.awake = true; break; } }
   }
-  hero.tgt = tgt; hero.goal = null;
-  if (tgt) return;
-  const tile = (x, y) => y * MW + x;
-  if (chest && !chest.open && chest.room.visited) { hero.goal = [Math.floor(chest.x), Math.floor(chest.y)]; return; }
-  if (smith && !smith.used && smith.room.visited) { hero.goal = [Math.floor(smith.x), Math.floor(smith.y)]; return; }
-  let best = null; bd = 1e9;
+  const awake = mons.filter(m => !m.dead && m.awake);
+  for (const h of al) {
+    let t = null, bd = 1e9;
+    for (const m of awake) { const d = h.dist[tileOf(m)]; if (d >= 0 && d < bd) { bd = d; t = m; } }
+    h.tgt = t;
+  }
+  for (const h of al) if (!h.tgt && awake.length) { // everyone joins the fight
+    let t = null, bd = 1e9;
+    for (const m of awake) { const d = Math.hypot(m.x - h.x, m.y - h.y); if (d < bd) { bd = d; t = m; } }
+    h.tgt = t;
+  }
+  goal = null;
+  if (awake.length) return;
+  const D = lead.dist, tile = (x, y) => y * MW + x;
+  if (chest && !chest.open && chest.room.visited) { goal = [Math.floor(chest.x), Math.floor(chest.y)]; return; }
+  if (smith && !smith.used && smith.room.visited) { goal = [Math.floor(smith.x), Math.floor(smith.y)]; return; }
+  if (camp && !camp.used && camp.room.visited) { goal = [Math.floor(camp.x), Math.floor(camp.y)]; return; }
+  let best = null, bd = 1e9;
   for (const r of rooms) {
     if (r.visited || r.kind === "boss") continue;
-    const d = dist[tile(r.cx, r.cy)]; if (d >= 0 && d < bd) { bd = d; best = r; }
+    const d = D[tile(r.cx, r.cy)]; if (d >= 0 && d < bd) { bd = d; best = r; }
   }
-  if (best) { hero.goal = [best.cx, best.cy]; return; }
+  if (best) { goal = [best.cx, best.cy]; return; }
   bd = 1e9; let bm = null;
   for (const m of mons) {
     if (m.dead || m.boss) continue;
-    const d = dist[Math.floor(m.y) * MW + Math.floor(m.x)]; if (d >= 0 && d < bd) { bd = d; bm = m; }
+    const d = D[tileOf(m)]; if (d >= 0 && d < bd) { bd = d; bm = m; }
   }
   if (!bm) bm = mons.find(m => !m.dead);
-  if (bm) hero.goal = [Math.floor(bm.x), Math.floor(bm.y)];
+  if (bm) goal = [Math.floor(bm.x), Math.floor(bm.y)];
 }
 
 // ================= combat =================
@@ -578,20 +711,26 @@ function say(txt, col) {
 function ftext(x, y, s, c, big) { fxs.push({x, y, s, c, t: .8, big}); }
 function ring(x, y, r, c) { fxs.push({ring: 1, x, y, r, c, t: .4}); }
 function beam(x1, y1, x2, y2, c) { fxs.push({beam: 1, x: x1, y: y1, x2, y2, c, t: .18}); }
-function hurtHero(raw, from) {
-  const k = 25 + 10 * S.floor, def = ST.def * (hero.buffs.brace ? 1.6 : 1);
+function hurtHero(h, raw, from) {
+  if (h.down) return;
+  const k = 25 + 10 * S.floor, def = h.ST.def * (h.buffs.brace ? 1.6 : 1);
   let d = Math.max(1, raw * k / (k + def));
-  if (hero.buffs.guard) d *= .5;
-  if (Math.random() * 100 < ST.block) { d *= .4; ftext(hero.x, hero.y - .9, "Block", "#9ad0ff"); }
-  if (hero.shield > 0) { const a = Math.min(hero.shield, d); hero.shield -= a; d -= a; }
+  if (h.buffs.guard) d *= .5;
+  if (Math.random() * 100 < h.ST.block) { d *= .4; ftext(h.x, h.y - .9, "Block", "#9ad0ff"); }
+  if (h.shield > 0) { const a = Math.min(h.shield, d); h.shield -= a; d -= a; }
   if (d <= 0) return;
-  hero.hp -= d; ftext(hero.x, hero.y - .5, fmt(d), "#ff6b6b");
-  if (hero.hp <= 0) {
-    hero.hp = ST.hp; hero.mp = ST.mp; hero.buffs = {}; hero.shield = 0;
-    const nf = Math.max(1, S.floor - 1);
-    say("You were defeated" + (nf < S.floor ? " - retreating to floor " + nf : "") + ", slain by " + (from || "a monster"), "#e5484d");
-    S.floor = nf; genFloor();
+  h.hp -= d; ftext(h.x, h.y - .5, fmt(d), "#ff6b6b");
+  if (h.hp <= 0) {
+    h.hp = 0; h.down = true; h.buffs = {}; h.shield = 0; h.tgt = null;
+    say(h.m.name + " was struck down by " + (from || "a monster") + "!", "#e5484d");
+    if (heroes.every(x => x.down)) wipeFlag = true;
   }
+}
+function doWipe() {
+  const nf = Math.max(1, S.floor - 1);
+  say("The party was wiped out" + (nf < S.floor ? " - retreating to floor " + nf : ""), "#e5484d");
+  for (const h of heroes) { h.down = false; h.hp = h.ST.hp; h.mp = h.ST.mp; h.buffs = {}; h.shield = 0; }
+  S.floor = nf; genFloor();
 }
 function hitMon(m, dmg, crit) {
   if (m.dead) return;
@@ -629,41 +768,52 @@ function openChest() {
 function openSmith() {
   smith.used = true; smithOpen = true; dirty = true;
   say("The blacksmith offers to upgrade your gear", "#ff9a4a");
-  if (S.autoSmith) { const n = autoUpgrade(); if (n) say("Blacksmith upgraded your gear " + n + " time" + (n > 1 ? "s" : ""), "#ff9a4a"); else say("Not enough gold for upgrades", "#8e92b0"); }
+  if (S.autoSmith) { const n = autoUpgrade(); if (n) say("Blacksmith upgraded your gear " + n + " time" + (n > 1 ? "s" : ""), "#ff9a4a"); else say("Not enough gold or parts for upgrades", "#8e92b0"); }
+}
+function openCamp() {
+  camp.used = true; campOpen = true; dirty = true;
+  for (const c of camp.cands) {
+    if (!c.willing) { say(c.name + " the " + c.arch.k + " is not interested", "#8e92b0"); continue; }
+    if (S.autoRecruit && S.party.length < MAX_PARTY) recruit(c);
+    else say(c.name + " the " + c.arch.k + " is willing to join (Party tab)", "#8ad0ff");
+  }
 }
 
 // ----- skills -----
-function reachOK(t) { return Math.hypot(t.x - hero.x, t.y - hero.y) <= ST.rng + t.r * .5 && (!ST.ranged || los(hero.x, hero.y, t.x, t.y)); }
-function trySkills() {
-  if (hero.gcd > 0) return;
-  const cls = CLASSES[curCls], foes = mons.filter(m => !m.dead && m.awake);
+function reachOK(h, t) { return Math.hypot(t.x - h.x, t.y - h.y) <= h.ST.rng + t.r * .5 && (!h.ST.ranged || los(h.x, h.y, t.x, t.y)); }
+function trySkills(h) {
+  if (h.gcd > 0) return;
+  const cls = CLASSES[h.cls], foes = mons.filter(m => !m.dead && m.awake);
   if (!foes.length) return;
-  const t = hero.tgt;
-  if (!foes.some(m => Math.hypot(m.x - hero.x, m.y - hero.y) < 7)) return;
+  const t = h.tgt;
+  if (!foes.some(m => Math.hypot(m.x - h.x, m.y - h.y) < 7)) return;
   for (const id of cls.sk) {
     const d = SK[id];
-    if ((hero.skcd[id] || 0) > 0 || hero.mp < d.cost) continue;
+    if ((h.skcd[id] || 0) > 0 || h.mp < d.cost) continue;
     let ok = false;
-    if (d.buff) ok = !hero.buffs[d.buff] && t && Math.hypot(t.x - hero.x, t.y - hero.y) < 5 && (d.need !== "hurt" || hero.hp < ST.hp * .85);
-    else if (d.heal) ok = hero.hp < ST.hp * .5;
-    else if (d.mode === "aoeSelf") ok = foes.some(m => Math.hypot(m.x - hero.x, m.y - hero.y) < d.radius + m.r);
-    else ok = !!(t && !t.dead && reachOK(t));
-    if (ok) { cast(id); hero.gcd = .35; return; }
+    if (d.buff) ok = !h.buffs[d.buff] && t && Math.hypot(t.x - h.x, t.y - h.y) < 5 && (d.need !== "hurt" || h.hp < h.ST.hp * .85);
+    else if (d.heal) ok = alive().some(o => o.hp < o.ST.hp * .5);
+    else if (d.mode === "aoeSelf") ok = foes.some(m => Math.hypot(m.x - h.x, m.y - h.y) < d.radius + m.r);
+    else ok = !!(t && !t.dead && reachOK(h, t));
+    if (ok) { cast(h, id); h.gcd = .35; return; }
   }
 }
-function cast(id) {
-  const d = SK[id], st = S.sk[id] || (S.sk[id] = {lv: 1, uses: 0}), pw = 1 + .15 * (st.lv - 1), col = CLASSES[curCls].col;
-  hero.mp -= d.cost; hero.skcd[id] = d.cd * Math.max(.5, 1 - .03 * (st.lv - 1)); st.uses++;
-  if (st.lv < 10 && st.uses >= skNeed(st.lv)) { st.lv++; st.uses = 0; say(d.n + " reached level " + st.lv + "!", "#8ad0ff"); }
-  dirty = true; hero.swing = 1;
-  ftext(hero.x, hero.y - 1, d.n, col, true);
+function cast(h, id) {
+  const d = SK[id], sk = h.m.sk, st = sk[id] || (sk[id] = {lv: 1, uses: 0}), pw = 1 + .15 * (st.lv - 1), col = CLASSES[h.cls].col, ST = h.ST;
+  h.mp -= d.cost; h.skcd[id] = d.cd * Math.max(.5, 1 - .03 * (st.lv - 1)); st.uses++;
+  if (st.lv < 10 && st.uses >= skNeed(st.lv)) { st.lv++; st.uses = 0; say(h.m.name + "'s " + d.n + " reached level " + st.lv + "!", "#8ad0ff"); }
+  dirty = true; h.swing = 1;
+  ftext(h.x, h.y - 1, d.n, col, true);
   if (d.buff) {
-    hero.buffs[d.buff] = d.dur * (1 + .05 * (st.lv - 1));
-    if (d.shield) hero.shield = ST.hp * d.shield * pw;
-    ring(hero.x, hero.y, 1.2, col); return;
+    h.buffs[d.buff] = d.dur * (1 + .05 * (st.lv - 1));
+    if (d.shield) h.shield = ST.hp * d.shield * pw;
+    ring(h.x, h.y, 1.2, col); return;
   }
-  if (d.heal) { const h = ST.hp * d.heal * pw; hero.hp = Math.min(ST.hp, hero.hp + h); ftext(hero.x, hero.y - .5, "+" + fmt(h), "#5be37d"); ring(hero.x, hero.y, 1.2, "#5be37d"); return; }
-  const base = ST.atk * (hero.buffs.rage ? 1.4 : 1) * (hero.buffs.surge ? 1.5 : 1);
+  if (d.heal) {
+    for (const o of alive()) { const amt = o.ST.hp * d.heal * pw; o.hp = Math.min(o.ST.hp, o.hp + amt); ftext(o.x, o.y - .5, "+" + fmt(amt), "#5be37d"); ring(o.x, o.y, 1.2, "#5be37d"); }
+    return;
+  }
+  const base = ST.atk * (h.buffs.rage ? 1.4 : 1) * (h.buffs.surge ? 1.5 : 1);
   const fx = m => {
     if (m.dead) return;
     if (d.stun) m.stun = Math.max(m.stun, d.stun * (m.boss ? .4 : 1));
@@ -671,26 +821,26 @@ function cast(id) {
     if (d.dot) m.dots.push({dps: base * d.dot * pw / d.dotDur, t: d.dotDur});
   };
   const hit = (m, mult) => {
-    const c = hero.buffs.focus || Math.random() * 100 < ST.crit;
+    const c = h.buffs.focus || Math.random() * 100 < ST.crit;
     hitMon(m, base * d.mult * pw * (mult || 1) * rf(.9, 1.1) * (c ? 2 : 1), c); fx(m);
   };
-  const t = hero.tgt, foes = mons.filter(m => !m.dead && m.awake);
+  const t = h.tgt, foes = mons.filter(m => !m.dead && m.awake);
   switch (d.mode) {
-    case "single": for (let i = 0; i < (d.hits || 1); i++) if (!t.dead) hit(t); beam(hero.x, hero.y, t.x, t.y, col); break;
-    case "splash": projs.push({x: hero.x, y: hero.y, own: 1, tgt: t, dmg: base * d.mult * pw, crit: false, splash: d.radius, life: 2, col: "#ff8a3a", sp: 10, proj: "magic"}); break;
+    case "single": for (let i = 0; i < (d.hits || 1); i++) if (!t.dead) hit(t); beam(h.x, h.y, t.x, t.y, col); break;
+    case "splash": projs.push({x: h.x, y: h.y, own: 1, tgt: t, dmg: base * d.mult * pw, crit: false, splash: d.radius, life: 2, col: "#ff8a3a", sp: 10, proj: "magic"}); break;
     case "multi": {
       const n = d.n + Math.floor((st.lv - 1) / 3);
-      const ts2 = foes.filter(m => Math.hypot(m.x - hero.x, m.y - hero.y) <= ST.rng + 1 && los(hero.x, hero.y, m.x, m.y))
-        .sort((a, b) => Math.hypot(a.x - hero.x, a.y - hero.y) - Math.hypot(b.x - hero.x, b.y - hero.y)).slice(0, n);
-      for (const m of ts2) { hit(m); beam(hero.x, hero.y, m.x, m.y, col); } break;
+      const ts2 = foes.filter(m => Math.hypot(m.x - h.x, m.y - h.y) <= ST.rng + 1 && los(h.x, h.y, m.x, m.y))
+        .sort((a, b) => Math.hypot(a.x - h.x, a.y - h.y) - Math.hypot(b.x - h.x, b.y - h.y)).slice(0, n);
+      for (const m of ts2) { hit(m); beam(h.x, h.y, m.x, m.y, col); } break;
     }
-    case "rain": { ring(hero.x, hero.y, ST.rng, col); foes.filter(m => Math.hypot(m.x - hero.x, m.y - hero.y) <= ST.rng + 1).slice(0, 14).forEach(m => hit(m)); break; }
-    case "aoeSelf": { const r = d.radius * (1 + .04 * (st.lv - 1)); ring(hero.x, hero.y, r, col); foes.filter(m => Math.hypot(m.x - hero.x, m.y - hero.y) < r + m.r).forEach(m => hit(m)); break; }
+    case "rain": { ring(h.x, h.y, ST.rng, col); foes.filter(m => Math.hypot(m.x - h.x, m.y - h.y) <= ST.rng + 1).slice(0, 14).forEach(m => hit(m)); break; }
+    case "aoeSelf": { const r = d.radius * (1 + .04 * (st.lv - 1)); ring(h.x, h.y, r, col); foes.filter(m => Math.hypot(m.x - h.x, m.y - h.y) < r + m.r).forEach(m => hit(m)); break; }
     case "line": {
-      const a = Math.atan2(t.y - hero.y, t.x - hero.x), ux = Math.cos(a), uy = Math.sin(a);
-      hit(t); beam(hero.x, hero.y, hero.x + ux * (ST.rng + 2.5), hero.y + uy * (ST.rng + 2.5), col);
+      const a = Math.atan2(t.y - h.y, t.x - h.x), ux = Math.cos(a), uy = Math.sin(a);
+      hit(t); beam(h.x, h.y, h.x + ux * (ST.rng + 2.5), h.y + uy * (ST.rng + 2.5), col);
       for (const m of foes) {
-        if (m === t) continue; const rx = m.x - hero.x, ry = m.y - hero.y, al = rx * ux + ry * uy, pe = Math.abs(-rx * uy + ry * ux);
+        if (m === t) continue; const rx = m.x - h.x, ry = m.y - h.y, al = rx * ux + ry * uy, pe = Math.abs(-rx * uy + ry * ux);
         if (al > 0 && al < ST.rng + 2.5 && pe < .9) hit(m, .8);
       }
       break;
@@ -698,55 +848,104 @@ function cast(id) {
   }
 }
 
+// ----- party movement & formation -----
+function advance(h, t, d, dt) {
+  const n = nextTileTo(h.dist, h.par, Math.floor(t.x), Math.floor(t.y));
+  if (!n) return;
+  if (d < 1.5 && los(h.x, h.y, t.x, t.y)) stepOn(h, t.x, t.y, 3.4, dt); else stepOn(h, n[0], n[1], 3.4, dt);
+}
+function retreat(h, en, dt) { // back-liners step away from whatever gets close
+  let best = null, bd = Math.hypot(en.x - h.x, en.y - h.y);
+  const tx = Math.floor(h.x), ty = Math.floor(h.y);
+  for (const [dx, dy] of K4) {
+    const nx = tx + dx, ny = ty + dy; if (nx < 0 || ny < 0 || nx >= MW || ny >= MH || !grid[ny * MW + nx]) continue;
+    const d = Math.hypot(en.x - (nx + .5), en.y - (ny + .5)); if (d > bd + .2) { bd = d; best = [nx + .5, ny + .5]; }
+  }
+  if (best) { const a = h.ang; stepOn(h, best[0], best[1], 3.6, dt); h.ang = a; }
+}
+function heroAct(h, dt) {
+  const ST = h.ST, t = h.tgt, aspd = ST.aspd * (h.buffs.rage ? 1.4 : 1);
+  if (t && !t.dead) {
+    const d = Math.hypot(t.x - h.x, t.y - h.y), ok = reachOK(h, t);
+    h.ang = Math.atan2(t.y - h.y, t.x - h.x);
+    if (ok && h.cd <= 0) {
+      h.cd = 1 / aspd; h.swing = 1;
+      const crit = h.buffs.focus || Math.random() * 100 < ST.crit, dmg = ST.atk * (h.buffs.rage ? 1.4 : 1) * (h.buffs.surge ? 1.5 : 1) * rf(.9, 1.1) * (crit ? 2 : 1);
+      if (ST.ranged) projs.push({x: h.x, y: h.y, own: 1, tgt: t, dmg, crit, life: 2, col: ST.proj === "magic" ? CLASSES[h.cls].col : "#f0e2b0", sp: ST.proj === "spear" ? 13 : 12, proj: ST.proj});
+      else hitMon(t, dmg, crit);
+    }
+    if (ST.rng >= 3) { // ranged: hold the back line, keep distance
+      let en = null, ed = 1e9;
+      for (const m of mons) if (!m.dead && m.awake) { const e = Math.hypot(m.x - h.x, m.y - h.y); if (e < ed) { ed = e; en = m; } }
+      if (en && ed < 2.3) retreat(h, en, dt);
+      else if (!ok) {
+        const front = heroes.filter(o => !o.down && o !== h && roleOf(o) === "front");
+        const fd = front.length ? Math.min(...front.map(o => Math.hypot(o.x - t.x, o.y - t.y))) : -1;
+        if (!front.length || d > fd + .3) advance(h, t, d, dt);
+      }
+    } else if (!ok) advance(h, t, d, dt);
+    return;
+  }
+  if (h === lead) {
+    if (goal) {
+      const n = nextTileTo(h.dist, h.par, goal[0], goal[1]);
+      if (n) stepOn(h, n[0], n[1], 3.4, dt);
+      if (chest && !chest.open && Math.hypot(chest.x - h.x, chest.y - h.y) < 1.1) openChest();
+      if (smith && !smith.used && Math.hypot(smith.x - h.x, smith.y - h.y) < 1.6) openSmith();
+      if (camp && !camp.used && Math.hypot(camp.x - h.x, camp.y - h.y) < 1.8) openCamp();
+    }
+  } else if (lead) { // trail the leader: frontliners close, back-liners further behind
+    const order = alive().sort((a, b) => RANK[a.cls] - RANK[b.cls]), idx = order.indexOf(h);
+    const want = 1.0 + .85 * idx, dl = Math.hypot(lead.x - h.x, lead.y - h.y);
+    if (dl > want) {
+      const n = nextTileTo(h.dist, h.par, Math.floor(lead.x), Math.floor(lead.y));
+      if (n) stepOn(h, n[0], n[1], dl > want + 3 ? 4.4 : 3.4, dt);
+    }
+  }
+}
+// monsters go for the closest hero, but frontliners draw aggro and backliners are ignored while a tank stands near
+function threatTarget(m) {
+  let b = null, bs = 1e9;
+  for (const h of heroes) {
+    if (h.down) continue;
+    const r = roleOf(h), s = Math.hypot(h.x - m.x, h.y - m.y) + (r === "front" ? -1.4 : r === "back" ? 1.4 : 0);
+    if (s < bs) { bs = s; b = h; }
+  }
+  return b;
+}
+
 function update(dt) {
   thinkT -= dt; if (thinkT <= 0) { think(); thinkT = .2; }
-  hero.anim += dt; hero.swing = Math.max(0, hero.swing - dt * 5);
-  hero.hp = Math.min(ST.hp, hero.hp + ST.regen * dt);
-  hero.mp = Math.min(ST.mp, hero.mp + ST.mpr * dt);
-  hero.cd -= dt; hero.gcd -= dt;
-  for (const k in hero.buffs) if ((hero.buffs[k] -= dt) <= 0) { delete hero.buffs[k]; if (k === "ward") hero.shield = 0; }
-  for (const k in hero.skcd) if (hero.skcd[k] > 0) hero.skcd[k] -= dt;
-  trySkills();
-
-  // hero
-  const t = hero.tgt, aspd = ST.aspd * (hero.buffs.rage ? 1.4 : 1);
-  if (t && !t.dead) {
-    const d = Math.hypot(t.x - hero.x, t.y - hero.y);
-    hero.ang = Math.atan2(t.y - hero.y, t.x - hero.x);
-    if (reachOK(t)) {
-      if (hero.cd <= 0) {
-        hero.cd = 1 / aspd; hero.swing = 1;
-        const crit = hero.buffs.focus || Math.random() * 100 < ST.crit, dmg = ST.atk * (hero.buffs.rage ? 1.4 : 1) * (hero.buffs.surge ? 1.5 : 1) * rf(.9, 1.1) * (crit ? 2 : 1);
-        if (ST.ranged) projs.push({x: hero.x, y: hero.y, own: 1, tgt: t, dmg, crit, life: 2, col: ST.proj === "magic" ? CLASSES[curCls].col : "#f0e2b0", sp: ST.proj === "spear" ? 13 : 12, proj: ST.proj});
-        else hitMon(t, dmg, crit);
-      }
-    } else {
-      const n = nextTileTo(Math.floor(t.x), Math.floor(t.y));
-      if (n) { if (d < 1.5 && los(hero.x, hero.y, t.x, t.y)) stepOn(hero, t.x, t.y, 3.4, dt); else stepOn(hero, n[0], n[1], 3.4, dt); }
-    }
-  } else if (hero.goal) {
-    const n = nextTileTo(hero.goal[0], hero.goal[1]);
-    if (n) stepOn(hero, n[0], n[1], 3.4, dt);
-    if (chest && !chest.open && Math.hypot(chest.x - hero.x, chest.y - hero.y) < 1.1) openChest();
-    if (smith && !smith.used && Math.hypot(smith.x - hero.x, smith.y - hero.y) < 1.6) openSmith();
+  const al = alive();
+  for (const h of al) {
+    h.anim += dt; h.swing = Math.max(0, h.swing - dt * 5);
+    h.hp = Math.min(h.ST.hp, h.hp + h.ST.regen * dt);
+    h.mp = Math.min(h.ST.mp, h.mp + h.ST.mpr * dt);
+    h.cd -= dt; h.gcd -= dt;
+    for (const k in h.buffs) if ((h.buffs[k] -= dt) <= 0) { delete h.buffs[k]; if (k === "ward") h.shield = 0; }
+    for (const k in h.skcd) if (h.skcd[k] > 0) h.skcd[k] -= dt;
+    trySkills(h);
+    heroAct(h, dt);
   }
+  for (const h of heroes) if (h.down) h.anim += dt;
 
   // monsters
   for (const m of mons) {
-    if (m.dead) continue;
+    if (m.dead || wipeFlag) continue;
     m.flash -= dt; m.cd -= dt; m.ph += dt * 5;
-    for (const dt2 of m.dots) { dt2.t -= dt; m.hp -= dt2.dps * dt; }
+    for (const d2 of m.dots) { d2.t -= dt; m.hp -= d2.dps * dt; }
     if (m.dots.length) { m.dots = m.dots.filter(x => x.t > 0); if (m.hp <= 0) { kill(m); continue; } }
     if (!m.awake) continue;
     if (m.stun > 0) { m.stun -= dt; continue; }
     if (m.slow > 0) m.slow -= dt;
-    const d = Math.hypot(hero.x - m.x, hero.y - m.y), sp = m.spd * (m.slow > 0 ? .5 : 1);
-    m.ang = Math.atan2(hero.y - m.y, hero.x - m.x);
+    const th = threatTarget(m); if (!th) continue;
+    const d = Math.hypot(th.x - m.x, th.y - m.y), sp = m.spd * (m.slow > 0 ? .5 : 1);
+    m.ang = Math.atan2(th.y - m.y, th.x - m.x);
     if (m.ranged) {
-      if (d > m.rng * .9 || !los(m.x, m.y, hero.x, hero.y)) chase(m, d, dt, sp);
+      if (d > m.rng * .9 || !los(m.x, m.y, th.x, th.y)) chase(m, d, dt, sp, th);
       else if (m.cd <= 0) { m.cd = m.ai; projs.push({x: m.x, y: m.y, own: 0, vx: Math.cos(m.ang), vy: Math.sin(m.ang), dmg: m.atk, life: 2.2, col: m.shape === "spider" ? "#a8e060" : "#d070ff", sp: 6, from: m.name}); }
-    } else if (d > m.r + .45) chase(m, d, dt, sp);
-    else if (m.cd <= 0) { m.cd = m.ai; hurtHero(m.atk, m.name); }
+    } else if (d > m.r + .45) chase(m, d, dt, sp, th);
+    else if (m.cd <= 0) { m.cd = m.ai; hurtHero(th, m.atk, m.name); }
     if (m.boss) {
       m.bossT -= dt;
       if (m.bossT <= 0) {
@@ -759,12 +958,21 @@ function update(dt) {
       }
     }
   }
+  if (wipeFlag) { wipeFlag = false; doWipe(); return; }
   for (let i = 0; i < mons.length; i++) { // separation
     const a = mons[i]; if (a.dead) continue;
     for (let j = i + 1; j < mons.length; j++) {
       const b = mons[j]; if (b.dead) continue;
       const dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy), min = (a.r + b.r) * .8;
       if (d < min && d > 1e-4) { const p = (min - d) / 2 / d; slide(a, -dx * p, -dy * p); slide(b, dx * p, dy * p); }
+    }
+  }
+  for (let i = 0; i < heroes.length; i++) { // party members don't stack either
+    const a = heroes[i]; if (a.down) continue;
+    for (let j = i + 1; j < heroes.length; j++) {
+      const b = heroes[j]; if (b.down) continue;
+      const dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy);
+      if (d < .6 && d > 1e-4) { const p = (.6 - d) / 2 / d; slide(a, -dx * p, -dy * p); slide(b, dx * p, dy * p); }
     }
   }
   mons = mons.filter(m => !m.dead);
@@ -782,10 +990,14 @@ function update(dt) {
           p.life = 0; continue;
         }
       } else if (p.vx === undefined) { p.life = 0; continue; }
-    } else if (Math.hypot(hero.x - p.x, hero.y - p.y) < .45) { hurtHero(p.dmg, p.from); p.life = 0; continue; }
+    } else {
+      const hh = al.find(h => !h.down && Math.hypot(h.x - p.x, h.y - p.y) < .45);
+      if (hh) { hurtHero(hh, p.dmg, p.from); p.life = 0; continue; }
+    }
     p.x += p.vx * p.sp * dt; p.y += p.vy * p.sp * dt;
     if (solid(p.x, p.y)) p.life = 0;
   }
+  if (wipeFlag) { wipeFlag = false; doWipe(); return; }
   projs = projs.filter(p => p.life > 0);
 
   for (const f of fxs) { f.t -= dt; if (f.p) { f.x += f.vx * dt; f.y += f.vy * dt; } else if (!f.ring && !f.beam) f.y -= .9 * dt; }
@@ -795,18 +1007,21 @@ function update(dt) {
   if (!mons.some(m => !m.dead)) {
     if (clearT === 0) say("Floor " + S.floor + " cleared!", "#5be37d");
     clearT += dt;
-    if (clearT > 2.2) { S.floor++; if (S.floor > S.best) S.best = S.floor; genFloor(); }
+    if (clearT > 2.2) {
+      for (const h of heroes) if (h.down) { h.down = false; h.hp = h.ST.hp * .4; h.mp = h.ST.mp * .4; say(h.m.name + " got back on their feet", "#8ad0ff"); }
+      S.floor++; if (S.floor > S.best) S.best = S.floor; genFloor();
+    }
   }
 }
-function chase(m, d, dt, sp) {
+function chase(m, d, dt, sp, th) {
   const mx = Math.floor(m.x), my = Math.floor(m.y);
-  if (d < 2 && los(m.x, m.y, hero.x, hero.y)) {
+  if (d < 2 && los(m.x, m.y, th.x, th.y)) {
     const s = Math.min(d, sp * dt); slide(m, Math.cos(m.ang) * s, Math.sin(m.ang) * s); return;
   }
-  const c = my * MW + mx; let best = null, bv = dist[c] < 0 ? 1e9 : dist[c];
+  const D = th.dist, c = my * MW + mx; let best = null, bv = D[c] < 0 ? 1e9 : D[c];
   for (const [dx, dy] of K4) {
     const nx = mx + dx, ny = my + dy; if (nx < 0 || ny < 0 || nx >= MW || ny >= MH) continue;
-    const v = dist[ny * MW + nx]; if (v >= 0 && v < bv) { bv = v; best = [nx + .5, ny + .5]; }
+    const v = D[ny * MW + nx]; if (v >= 0 && v < bv) { bv = v; best = [nx + .5, ny + .5]; }
   }
   if (best) { const a = m.ang; stepOn(m, best[0], best[1], sp, dt); m.ang = a; }
 }
@@ -836,14 +1051,16 @@ function drawWeapon(wt, col, r) {
     default: ctx.moveTo(r * .7, 0); ctx.lineTo(r * 2, 0); ctx.stroke(); // sword
   }
 }
-function drawHero(T) {
-  const r = ts * .36, main = S.eq.weapon, off = main && handsOf(main) === 2 ? null : S.eq.offhand;
-  ctx.save(); ctx.translate(hero.x * ts, hero.y * ts);
+function drawHero(h, T) {
+  const r = ts * .36, eq = h.m.eq, main = eq.weapon, off = main && handsOf(main) === 2 ? null : eq.offhand, cc = CLASSES[h.cls].col;
+  ctx.save(); ctx.translate(h.x * ts, h.y * ts);
   ctx.fillStyle = "rgba(0,0,0,.35)"; ctx.beginPath(); ctx.ellipse(0, r * .8, r, r * .38, 0, 0, 6.283); ctx.fill();
-  if (hero.buffs.rage || hero.buffs.surge || hero.buffs.focus) { ctx.strokeStyle = CLASSES[curCls].col; ctx.lineWidth = 2; ctx.globalAlpha = .6 + .3 * Math.sin(T / 120); ctx.beginPath(); ctx.arc(0, 0, r * 1.5, 0, 6.283); ctx.stroke(); ctx.globalAlpha = 1; }
-  if (hero.shield > 0) { ctx.strokeStyle = "#9ad0ff"; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(0, 0, r * 1.35, 0, 6.283); ctx.stroke(); }
-  ctx.rotate(hero.ang);
-  const sw = Math.sin(hero.swing * 3.14);
+  if (h.down) { ctx.globalAlpha = .45; ctx.fillStyle = "#8a90a8"; ctx.beginPath(); ctx.arc(0, 0, r, 0, 6.283); ctx.fill(); ctx.strokeStyle = "#e5484d"; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(-r * .5, -r * .5); ctx.lineTo(r * .5, r * .5); ctx.moveTo(r * .5, -r * .5); ctx.lineTo(-r * .5, r * .5); ctx.stroke(); ctx.restore(); return; }
+  ctx.strokeStyle = cc; ctx.lineWidth = 2; ctx.globalAlpha = .55; ctx.beginPath(); ctx.arc(0, 0, r * 1.25, 0, 6.283); ctx.stroke(); ctx.globalAlpha = 1;
+  if (h.buffs.rage || h.buffs.surge || h.buffs.focus) { ctx.strokeStyle = cc; ctx.lineWidth = 2; ctx.globalAlpha = .6 + .3 * Math.sin(T / 120); ctx.beginPath(); ctx.arc(0, 0, r * 1.6, 0, 6.283); ctx.stroke(); ctx.globalAlpha = 1; }
+  if (h.shield > 0) { ctx.strokeStyle = "#9ad0ff"; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(0, 0, r * 1.4, 0, 6.283); ctx.stroke(); }
+  ctx.save(); ctx.rotate(h.ang);
+  const sw = Math.sin(h.swing * 3.14);
   if (off) {
     ctx.save();
     if (off.wt) { ctx.rotate(-.6 + sw * 1.1); drawWeapon(off.wt, RAR[off.rar].c, r); }
@@ -855,11 +1072,28 @@ function drawHero(T) {
   }
   if (main) { ctx.save(); ctx.rotate(.5 - sw * 1.1); drawWeapon(main.wt, RAR[main.rar].c, r); ctx.restore(); }
   else { ctx.strokeStyle = "#e8c9a0"; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(r * .6, 0); ctx.lineTo(r * 1.1 + sw * r * .5, 0); ctx.stroke(); }
-  ctx.fillStyle = S.eq.armor ? RAR[S.eq.armor.rar].c : "#5a8cff"; ctx.strokeStyle = "rgba(0,0,0,.55)"; ctx.lineWidth = 2;
+  ctx.fillStyle = eq.armor ? RAR[eq.armor.rar].c : "#5a8cff"; ctx.strokeStyle = "rgba(0,0,0,.55)"; ctx.lineWidth = 2;
   ctx.beginPath(); ctx.arc(0, 0, r, 0, 6.283); ctx.fill(); ctx.stroke();
-  ctx.fillStyle = S.eq.helm ? RAR[S.eq.helm.rar].c : "#e8c9a0"; ctx.beginPath(); ctx.arc(r * .15, 0, r * .55, 0, 6.283); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = eq.helm ? RAR[eq.helm.rar].c : "#e8c9a0"; ctx.beginPath(); ctx.arc(r * .15, 0, r * .55, 0, 6.283); ctx.fill(); ctx.stroke();
   ctx.fillStyle = "#101020"; ctx.fillRect(r * .35, -r * .25, r * .22, r * .12); ctx.fillRect(r * .35, r * .13, r * .22, r * .12);
   ctx.restore();
+  const bw = ts * .8; ctx.fillStyle = "#000b"; ctx.fillRect(-bw / 2, -r * 1.9, bw, 4); ctx.fillStyle = "#4be08a"; ctx.fillRect(-bw / 2, -r * 1.9, bw * Math.max(0, h.hp / h.ST.hp), 4);
+  ctx.fillStyle = "#fff"; ctx.font = "bold 10px system-ui"; ctx.textAlign = "center"; ctx.lineWidth = 3; ctx.strokeStyle = "#000"; ctx.strokeText(h.m.name, 0, -r * 1.9 - 4); ctx.fillText(h.m.name, 0, -r * 1.9 - 4);
+  ctx.restore();
+}
+function drawCamp(T) {
+  const cx = camp.x * ts, cy = camp.y * ts, s = ts * .4;
+  ctx.fillStyle = "rgba(255,170,60,.18)"; ctx.beginPath(); ctx.arc(cx, cy, s * 3 + Math.sin(T / 180) * 2, 0, 6.283); ctx.fill();
+  ctx.fillStyle = "#5a3a22"; ctx.fillRect(cx - s * .6, cy + s * .1, s * 1.2, s * .25); ctx.fillRect(cx - s * .15, cy - s * .3, s * .3, s * .8);
+  ctx.fillStyle = "#ff8a3a"; ctx.beginPath(); ctx.moveTo(cx - s * .5, cy + s * .1); ctx.quadraticCurveTo(cx, cy - s * (1.3 + .2 * Math.sin(T / 90)), cx + s * .5, cy + s * .1); ctx.fill();
+  ctx.fillStyle = "#ffd070"; ctx.beginPath(); ctx.moveTo(cx - s * .25, cy + s * .1); ctx.quadraticCurveTo(cx, cy - s * .7, cx + s * .25, cy + s * .1); ctx.fill();
+  camp.cands.forEach((c, i) => {
+    if (c.took) return; const px = cx + (i ? s * 2.2 : -s * 2.2), py = cy + s * .3;
+    ctx.fillStyle = "rgba(0,0,0,.3)"; ctx.beginPath(); ctx.ellipse(px, py + s * .6, s * .7, s * .25, 0, 0, 6.283); ctx.fill();
+    ctx.fillStyle = c.willing ? "#7aa8ff" : "#8a8aa0"; ctx.beginPath(); ctx.arc(px, py, s * .7, 0, 6.283); ctx.fill();
+    ctx.fillStyle = "#e8c9a0"; ctx.beginPath(); ctx.arc(px, py - s * .35, s * .4, 0, 6.283); ctx.fill();
+    ctx.fillStyle = "#fff"; ctx.font = "bold 10px system-ui"; ctx.textAlign = "center"; ctx.lineWidth = 3; ctx.strokeStyle = "#000"; ctx.strokeText(c.name, px, py - s * 1.1); ctx.fillText(c.name, px, py - s * 1.1);
+  });
 }
 function drawSmith(T) {
   const cx = smith.x * ts, cy = smith.y * ts, s = ts * .4;
@@ -877,7 +1111,9 @@ function drawSmith(T) {
 function draw(T) {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.fillStyle = "#06070d"; ctx.fillRect(0, 0, W, H);
-  camX += (hero.x - camX) * .12; camY += (hero.y - camY) * .12;
+  const al = heroes.filter(h => !h.down), cH = al.length ? al : heroes;
+  const tx = cH.reduce((a, h) => a + h.x, 0) / cH.length, ty = cH.reduce((a, h) => a + h.y, 0) / cH.length;
+  camX += (tx - camX) * .12; camY += (ty - camY) * .12;
   ctx.save(); ctx.translate(W / 2 - camX * ts, H / 2 - camY * ts);
   const x0 = Math.max(0, Math.floor(camX - W / 2 / ts) - 1), x1 = Math.min(MW - 1, Math.ceil(camX + W / 2 / ts) + 1);
   const y0 = Math.max(0, Math.floor(camY - H / 2 / ts) - 1), y1 = Math.min(MH - 1, Math.ceil(camY + H / 2 / ts) + 1);
@@ -899,6 +1135,7 @@ function draw(T) {
     }
   }
   if (smith && seen[Math.floor(smith.y) * MW + Math.floor(smith.x)]) drawSmith(T);
+  if (camp && seen[Math.floor(camp.y) * MW + Math.floor(camp.x)]) drawCamp(T);
   if (chest && !chest.gone && seen[Math.floor(chest.y) * MW + Math.floor(chest.x)]) {
     const cx = chest.x * ts, cy = chest.y * ts, s = ts * .38;
     ctx.fillStyle = "#8a5a24"; ctx.fillRect(cx - s, cy - s * .6, s * 2, s * 1.3); ctx.fillStyle = chest.open ? "#4a2f10" : "#b07a3a"; ctx.fillRect(cx - s, cy - s * (chest.open ? 1.3 : .9), s * 2, s * .5);
@@ -910,7 +1147,7 @@ function draw(T) {
     if (m.stun > 0) { ctx.fillStyle = "#ffe040"; ctx.font = "bold 14px system-ui"; ctx.textAlign = "center"; ctx.fillText("✦", m.x * ts, m.y * ts - m.r * ts - 12); }
     if (m.slow > 0) { ctx.strokeStyle = "#8ad0ff"; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(m.x * ts, m.y * ts, m.r * ts * 1.3, 0, 6.283); ctx.stroke(); }
   }
-  drawHero(T);
+  heroes.slice().sort((a, b) => a.y - b.y).forEach(h => drawHero(h, T));
   for (const p of projs) {
     ctx.fillStyle = p.col; ctx.strokeStyle = p.col; ctx.shadowColor = p.col; ctx.shadowBlur = 8;
     const px = p.x * ts, py = p.y * ts;
@@ -943,8 +1180,9 @@ function draw(T) {
   const dot = (o, c) => { if (o && seen[Math.floor(o.y) * MW + Math.floor(o.x)]) { ctx.fillStyle = c; ctx.fillRect(mx + Math.floor(o.x) * mp - 1, my + Math.floor(o.y) * mp - 1, mp + 2, mp + 2); } };
   if (chest && !chest.open) dot(chest, "#ffc94a");
   if (smith) dot(smith, "#ff8a3a");
+  if (camp && !camp.used) dot(camp, "#8ad0ff");
   for (const m of mons) if (!m.dead && vis[Math.floor(m.y) * MW + Math.floor(m.x)]) { ctx.fillStyle = m.boss ? "#ff4a4a" : "#e5484d"; ctx.fillRect(mx + Math.floor(m.x) * mp, my + Math.floor(m.y) * mp, mp, mp); }
-  ctx.fillStyle = "#6ab0ff"; ctx.fillRect(mx + Math.floor(hero.x) * mp - 1, my + Math.floor(hero.y) * mp - 1, mp + 2, mp + 2);
+  for (const h of heroes) { ctx.fillStyle = h.down ? "#888" : "#6ab0ff"; ctx.fillRect(mx + Math.floor(h.x) * mp - 1, my + Math.floor(h.y) * mp - 1, mp + 2, mp + 2); }
   ctx.globalAlpha = 1;
 }
 function drawMon(m, T) {
@@ -998,37 +1236,51 @@ function drawMon(m, T) {
 }
 
 // ================= UI =================
-const TABS = [["gear", "Gear"], ["bag", "Bag"], ["skills", "Skills"], ["hero", "Hero"], ["parts", "Parts"], ["smith", "Smith"]];
+const TABS = [["gear", "Gear"], ["bag", "Bag"], ["skills", "Skills"], ["hero", "Stats"], ["party", "Party"], ["parts", "Parts"], ["smith", "Smith"]];
 let tab = "gear";
-const tabsEl = $("tabs"), panel = $("panel");
+const tabsEl = $("tabs"), panel = $("panel"), partyEl = $("party");
 tabsEl.innerHTML = TABS.map(t => `<button data-t="${t[0]}">${t[1]}</button>`).join("");
 tabsEl.onclick = e => { const t = e.target.dataset.t; if (t) { tab = t; dirty = true; renderPanel(); } };
 const esc = s => String(s).replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
 const itemName = it => `<span style="color:${RAR[it.rar].c}">${esc(it.name)}${it.up ? " +" + it.up : ""}</span>`;
 const tgl = (on, a, label) => `<button class="tg ${on ? "on" : ""}" data-a="${a}">${label}: ${on ? "ON" : "OFF"}</button>`;
+const ROLE_TXT = {front: "Front line", mid: "Mid line", back: "Back line"};
+
+function buildParty() {
+  partyEl.innerHTML = heroes.map((h, i) => `<div class="pc" data-i="${i}"><div class="pn"><i style="background:${CLASSES[h.cls].col}"></i><b>${esc(h.m.name)}</b><small>${h.cls}</small></div>
+    <div class="bb hp"><i></i></div><div class="bb mp"><i></i></div></div>`).join("");
+  dirty = true;
+}
+partyEl.onclick = e => { const c = e.target.closest(".pc"); if (c) { S.sel = +c.dataset.i; dirty = true; renderPanel(); } };
+function memberBar() {
+  if (heroes.length < 2) return "";
+  return `<div class="bar">${heroes.map((h, i) => `<button class="tg ${i === S.sel ? "on" : ""}" data-sel="${i}">${esc(h.m.name)} · ${h.cls}</button>`).join("")}</div>`;
+}
 
 function renderPanel() {
   for (const b of tabsEl.children) b.classList.toggle("on", b.dataset.t === tab);
   dirty = false; let h = "";
+  const H = curH(), m = H.m;
   if (tab === "gear") {
-    const c = CLASSES[curCls];
-    h += `<div class="cls" style="border-color:${c.col}"><b style="color:${c.col}">${curCls}</b><small>${c.pas}</small></div>
+    const c = CLASSES[H.cls], A = H.ATT, ST = H.ST;
+    h += memberBar() + `<div class="cls" style="border-color:${c.col}"><b style="color:${c.col}">${esc(m.name)} the ${H.cls}${heroes.length > 1 ? " · " + ROLE_TXT[roleOf(H)] : ""}</b><small>${c.pas}</small></div>
       <div class="stats"><div>HP<b>${fmt(ST.hp)}</b></div><div>MP<b>${fmt(ST.mp)}</b></div><div>ATK<b>${fmt(ST.atk)}</b></div>
       <div>DEF<b>${fmt(ST.def)}</b></div><div>SPD<b>${ST.aspd.toFixed(2)}/s</b></div><div>CRIT<b>${fmt(ST.crit)}%</b></div>
-      <div>STR<b>${fmt(ATT.str)}</b></div><div>DEX<b>${fmt(ATT.dex)}</b></div><div>INT<b>${fmt(ATT.int)}</b></div></div>`;
-    const main = S.eq.weapon, twoH = main && handsOf(main) === 2;
+      <div>STR<b>${fmt(A.str)}</b></div><div>DEX<b>${fmt(A.dex)}</b></div><div>INT<b>${fmt(A.int)}</b></div></div>`;
+    const main = m.eq.weapon, twoH = main && handsOf(main) === 2;
     for (const sl of SLOTS) {
-      const it = S.eq[sl];
+      const it = m.eq[sl];
       let body;
       if (sl === "offhand" && twoH) body = '<span style="color:var(--dim)">Both hands on the ' + esc(main.name) + "</span>";
       else body = it ? itemName(it) + `<small>Lv ${it.ilvl} ${RAR[it.rar].n} · ${statTxt(it)}</small>` : '<span style="color:var(--dim)">Empty</span>';
       h += `<div class="row"><div class="sl">${SLOT_NAME[sl]}</div><div class="nm">${body}</div></div>`;
     }
   } else if (tab === "bag") {
-    h += `<div class="bar">${tgl(S.autoEquip, "autoeq", "Auto-equip best")}${tgl(S.autoJunk, "junk", "Auto-sell common")}
+    h += `<div class="bar">${tgl(S.autoEquip, "autoeq", "Auto-equip")}${tgl(S.autoJunk, "junk", "Auto-sell common")}
       <button class="tg" data-a="sellbag">Sell all (${S.bag.length})</button></div>`;
-    const items = S.bag.slice().sort((a, b) => score(b) - score(a));
-    if (!items.length) h += `<div class="empty">Your bag is empty. The hero equips what suits their build.<br>Capacity ${BAG}.</div>`;
+    h += heroes.length > 1 ? `<div class="hint">Shared by the whole party. Equip buttons apply to <b>${esc(m.name)}</b>.</div>` + memberBar() : "";
+    const items = S.bag.slice().sort((a, b) => score(b, H) - score(a, H));
+    if (!items.length) h += `<div class="empty">The bag is empty. The party equips whatever suits each member.<br>Capacity ${BAG}.</div>`;
     for (const it of items) {
       const btns = it.slot === "weapon" && handsOf(it) === 1
         ? `<button data-e="${it.id}">Main</button><button data-e="${it.id}" data-w="offhand">Off</button>` : `<button data-e="${it.id}">Equip</button>`;
@@ -1037,42 +1289,63 @@ function renderPanel() {
     }
     h += `<div class="foot">${S.bag.length}/${BAG} slots</div>`;
   } else if (tab === "skills") {
-    const c = CLASSES[curCls];
-    h += `<div class="cls" style="border-color:${c.col}"><b style="color:${c.col}">${curCls} skills</b><small>Cast automatically using mana. Each use trains the skill; skills keep their level if you change class.</small></div>`;
+    const c = CLASSES[H.cls];
+    h += memberBar() + `<div class="cls" style="border-color:${c.col}"><b style="color:${c.col}">${esc(m.name)}: ${H.cls} skills</b><small>Cast automatically using mana. Each use trains the skill; skills keep their level if the class changes.</small></div>`;
     for (const id of c.sk) {
-      const d = SK[id], st = S.sk[id] || {lv: 1, uses: 0}, need = skNeed(st.lv), pct = st.lv >= 10 ? 100 : st.uses / need * 100;
+      const d = SK[id], st = m.sk[id] || {lv: 1, uses: 0}, need = skNeed(st.lv), pct = st.lv >= 10 ? 100 : st.uses / need * 100;
       h += `<div class="row col"><div class="nm">${d.n} <span class="lv">Lv ${st.lv}${st.lv >= 10 ? " MAX" : ""}</span><small>${d.d}</small><small>${d.cost} MP · ${d.cd}s cooldown${st.lv < 10 ? " · " + st.uses + "/" + need + " uses to level" : ""}</small>
         <div class="meter"><i style="width:${pct}%;background:${c.col}"></i></div></div></div>`;
     }
-    const others = Object.keys(CLASSES).filter(k => k !== curCls && k !== "Novice");
-    h += `<div class="foot">Other classes: ${others.map(k => `<span style="color:${CLASSES[k].col}">${k}</span>`).join(", ")}</div>`;
   } else if (tab === "hero") {
-    h += `<div class="cls"><b style="color:#8ad0ff"><span id="expv"></span> EXP</b><small id="lean"></small></div><div class="bar">${tgl(S.autoSpend, "autospend", "Auto-spend EXP")}</div>`;
+    h += `<div class="cls"><b style="color:#8ad0ff"><span id="expv"></span> EXP <span class="lv">shared by the party</span></b><small id="lean"></small></div><div class="bar">${tgl(S.autoSpend, "autospend", "Auto-spend EXP")}</div>` + memberBar();
     for (const k in ATTRS) h += `<div class="row"><div class="nm" id="an-${k}"></div><button data-at="${k}" id="ab-${k}"></button></div>`;
     for (const k in EXTRA) h += `<div class="row"><div class="nm" id="en-${k}"></div><button data-ex="${k}" id="eb-${k}"></button></div>`;
+  } else if (tab === "party") {
+    h += `<div class="bar">${tgl(S.autoRecruit, "autorecruit", "Auto-recruit")}</div><div class="hint">Every 10 floors a camp of wanderers may offer to join (up to ${MAX_PARTY} members). Frontliners guard, back-liners keep their distance.</div>`;
+    heroes.forEach((x, i) => {
+      const c = CLASSES[x.cls];
+      h += `<div class="row"><div class="nm"><span style="color:${c.col}">${esc(x.m.name)}</span> · ${x.cls}${x.m.arch ? " (" + x.m.arch + ")" : ""}<small>${ROLE_TXT[roleOf(x)]} · HP ${fmt(x.ST.hp)} · ATK ${fmt(x.ST.atk)} · DEF ${fmt(x.ST.def)}${x.down ? " · DOWN" : ""}</small></div>
+        ${i ? `<button data-dis="${i}">Dismiss</button>` : ""}</div>`;
+    });
+    if (camp && campOpen) {
+      h += `<div class="foot">Wanderers at the camp</div>`;
+      for (const c of camp.cands) {
+        if (c.took) continue;
+        const free = S.party.length < MAX_PARTY;
+        h += `<div class="row"><div class="nm">${esc(c.name)} the ${c.arch.k}<small>${c.willing ? "Willing to join" : "Not interested"} · ${c.arch.main}${c.arch.off ? " + " + c.arch.off : ""}</small></div>
+          ${c.willing && free ? `<button class="sell" data-rec="${camp.cands.indexOf(c)}">Recruit</button>` : ""}</div>`;
+      }
+    }
   } else if (tab === "parts") {
     const names = Object.keys(S.parts), total = names.reduce((a, n) => a + S.parts[n].val, 0);
     h += `<div class="bar">${tgl(S.autoParts, "autoparts", "Auto-sell parts")}<button class="tg" data-a="sellparts">Sell all (${fmt(total)}g)</button></div>`;
-    if (!names.length) h += `<div class="empty">Monsters drop fangs, claws, hides and more.<br>Sell them for gold.</div>`;
+    h += `<div class="hint">The blacksmith needs parts to take gear past +5. Keep some.</div>`;
+    if (!names.length) h += `<div class="empty">Monsters drop fangs, claws, hides and more.</div>`;
     for (const n of names.sort()) { const p = S.parts[n]; h += `<div class="row"><div class="nm">${esc(n)}<small>x${p.n} · worth ${fmt(p.val)}g</small></div><button class="sell" data-p="${esc(n)}">Sell</button></div>`; }
   } else if (tab === "smith") {
     h += `<div class="bar">${tgl(S.autoSmith, "autosmith", "Auto-upgrade on visit")}</div>`;
-    if (!smithOpen) h += `<div class="empty">Blacksmith rooms are rare, found from floor 2 and at least every 6 floors. Bring gold: equipped gear can be upgraded up to +${MAX_UP}.</div>`;
-    else for (const sl of SLOTS) {
-      const it = S.eq[sl]; if (!it) continue;
-      h += `<div class="row"><div class="sl">${SLOT_NAME[sl]}</div><div class="nm">${itemName(it)}<small>${statTxt(it)}</small></div><button class="sell" data-up="${sl}" id="ub-${sl}"></button></div>`;
+    h += `<div class="hint">Upgrades have no cap. Past +5 each upgrade also needs monster parts (${S.autoParts ? "auto-sell parts is ON, so none are kept" : "you have " + partCount()}).</div>`;
+    if (!smithOpen) h += `<div class="empty">Blacksmith rooms are rare: from floor 2, and at least every 6 floors. Bring gold and parts.</div>`;
+    else {
+      h += memberBar();
+      for (const sl of SLOTS) {
+        const it = m.eq[sl]; if (!it) continue;
+        h += `<div class="row"><div class="sl">${SLOT_NAME[sl]}</div><div class="nm">${itemName(it)}<small>${statTxt(it)}</small></div><button class="sell" data-up="${sl}" id="ub-${sl}"></button></div>`;
+      }
     }
     h += `<div class="foot">Gold: <span id="smg"></span></div>`;
   }
   panel.innerHTML = h; refreshPanel();
 }
 function refreshPanel() {
+  const H = curH();
   if (tab === "hero") {
     $("expv").textContent = fmt(S.exp);
-    $("lean").textContent = `Leaning ${Math.round(SH.str * 100)}% STR · ${Math.round(SH.dex * 100)}% DEX · ${Math.round(SH.int * 100)}% INT. The hero favours gear that fits.`;
+    const sh = H.SH;
+    $("lean").textContent = `${H.m.name} leans ${Math.round(sh.str * 100)}% STR · ${Math.round(sh.dex * 100)}% DEX · ${Math.round(sh.int * 100)}% INT. Heroes favour gear that fits.`;
     for (const k in ATTRS) {
-      const c = attrCost(k), gear = ATT[k] - 5 - S.attr[k];
-      $("an-" + k).innerHTML = `${ATTRS[k].n} <span class="lv">${fmt(ATT[k])}</span><small>${ATTRS[k].d}${gear ? " · +" + fmt(gear) + " from gear" : ""}</small>`;
+      const c = attrCost(H, k), gear = H.ATT[k] - 5 - H.m.attr[k];
+      $("an-" + k).innerHTML = `${ATTRS[k].n} <span class="lv">${fmt(H.ATT[k])}</span><small>${ATTRS[k].d}${gear ? " · +" + fmt(gear) + " from gear" : ""}</small>`;
       const b = $("ab-" + k); b.textContent = fmt(c) + " xp"; b.className = "sell" + (S.exp < c ? " dis" : "");
     }
     for (const k in EXTRA) {
@@ -1081,23 +1354,26 @@ function refreshPanel() {
       const b = $("eb-" + k); b.textContent = fmt(c) + " xp"; b.className = "sell" + (S.exp < c ? " dis" : "");
     }
   } else if (tab === "smith") {
-    const g = $("smg"); if (g) g.textContent = fmt(S.gold);
+    const g = $("smg"); if (g) g.textContent = fmt(S.gold) + " · " + partCount() + " parts";
     for (const sl of SLOTS) {
-      const b = $("ub-" + sl), it = S.eq[sl]; if (!b || !it) continue;
-      const max = it.up >= MAX_UP, c = upCost(it);
-      b.textContent = max ? "MAX" : "+" + (it.up + 1) + " · " + fmt(c) + "g"; b.className = "sell" + (max || S.gold < c ? " dis" : "");
+      const b = $("ub-" + sl), it = H.m.eq[sl]; if (!b || !it) continue;
+      const pn = upParts(it), c = upCost(it);
+      b.textContent = "+" + (it.up + 1) + " · " + fmt(c) + "g" + (pn ? " + " + pn + " parts" : ""); b.className = "sell" + (canUpgrade(it) ? "" : " dis");
     }
   }
 }
 panel.onclick = e => {
   const t = e.target.closest("button"); if (!t) return;
-  const d = t.dataset;
-  if (d.at) { buyAttr(d.at); }
-  else if (d.ex) { buyExtra(d.ex); }
-  else if (d.up) { const it = S.eq[d.up]; if (it) upgradeItem(it); }
-  else if (d.e) { manualEquip(+d.e, d.w); }
-  else if (d.s) { sellFromBag(+d.s); }
+  const d = t.dataset, H = curH();
+  if (d.sel != null) S.sel = +d.sel;
+  else if (d.at) buyAttr(H, d.at);
+  else if (d.ex) buyExtra(d.ex);
+  else if (d.up) { const it = H.m.eq[d.up]; if (it) upgradeItem(it); }
+  else if (d.e) manualEquip(H, +d.e, d.w);
+  else if (d.s) sellFromBag(+d.s);
   else if (d.p) { const p = S.parts[d.p]; if (p) { gain(p.val); delete S.parts[d.p]; } dirty = true; }
+  else if (d.dis) dismiss(+d.dis);
+  else if (d.rec) { if (camp) recruit(camp.cands[+d.rec]); }
   else if (d.a === "junk") { S.autoJunk = !S.autoJunk; if (S.autoJunk) autoEquip(); }
   else if (d.a === "autoeq") { S.autoEquip = !S.autoEquip; if (S.autoEquip) autoEquip(); }
   else if (d.a === "sellbag") { for (const it of S.bag) sellItem(it); S.bag = []; }
@@ -1105,6 +1381,7 @@ panel.onclick = e => {
   else if (d.a === "sellparts") { for (const n in S.parts) gain(S.parts[n].val); S.parts = {}; }
   else if (d.a === "autospend") { S.autoSpend = !S.autoSpend; if (S.autoSpend) autoSpend(); }
   else if (d.a === "autosmith") S.autoSmith = !S.autoSmith;
+  else if (d.a === "autorecruit") S.autoRecruit = !S.autoRecruit;
   dirty = true; renderPanel();
 };
 $("spd").onclick = () => { const o = [1, 2, 4, 8, 16]; S.speed = o[(o.indexOf(S.speed) + 1) % o.length] || 1; $("spd").textContent = S.speed + "x"; };
@@ -1114,11 +1391,14 @@ function hud() {
   $("gold").textContent = fmt(S.gold) + "g";
   $("exp").textContent = fmt(S.exp) + " xp";
   const alive = mons.filter(m => !m.dead).length;
-  $("foes").textContent = curCls + " · " + (alive ? alive + " foes" : "cleared");
-  $("hpfill").style.width = Math.max(0, hero.hp / ST.hp * 100) + "%";
-  $("hptxt").textContent = fmt(Math.max(0, hero.hp)) + " / " + fmt(ST.hp) + (hero.shield > 0 ? " (+" + fmt(hero.shield) + ")" : "");
-  $("mpfill").style.width = Math.max(0, hero.mp / ST.mp * 100) + "%";
-  $("mptxt").textContent = fmt(Math.max(0, hero.mp)) + " / " + fmt(ST.mp) + " MP";
+  $("foes").textContent = (alive ? alive + " foes" : "cleared") + " · party " + heroes.length;
+  const cards = partyEl.children;
+  heroes.forEach((h, i) => {
+    const c = cards[i]; if (!c) return;
+    c.classList.toggle("down", h.down); c.classList.toggle("sel", i === S.sel && heroes.length > 1);
+    c.querySelector(".hp i").style.width = Math.max(0, h.hp / h.ST.hp * 100) + "%";
+    c.querySelector(".mp i").style.width = Math.max(0, h.mp / h.ST.mp * 100) + "%";
+  });
   const now = Date.now(); goldWin = goldWin.filter(x => now - x[0] < 20000); xpWin = xpWin.filter(x => now - x[0] < 20000);
   const gps = goldWin.reduce((a, x) => a + x[1], 0) / 20, xps = xpWin.reduce((a, x) => a + x[1], 0) / 20, sp = Math.max(1, S.speed);
   if (goldWin.length) { S.gpsAvg = S.gpsAvg ? S.gpsAvg * .9 + gps / sp * .1 : gps / sp; S.xpsAvg = S.xpsAvg ? S.xpsAvg * .9 + xps / sp * .1 : xps / sp; }
@@ -1142,16 +1422,17 @@ document.addEventListener("visibilitychange", () => { if (document.hidden) save(
 addEventListener("pagehide", save);
 
 (function boot() {
-  resize(); recalc(); hero.hp = ST.hp; hero.mp = ST.mp;
+  resize(); syncHeroes();
+  for (const h of heroes) { h.hp = h.ST.hp; h.mp = h.ST.mp; }
   const away = Math.min((Date.now() - S.t) / 1000, 7200);
   genFloor(); autoEquip(); booted = true;
   if (away > 60 && (S.gpsAvg > 0 || S.xpsAvg > 0)) {
     const g = Math.floor(S.gpsAvg * away * .5), x = Math.floor(S.xpsAvg * away * .5); gain(g); gainXp(x);
-    setTimeout(() => say("Welcome back! Your hero earned " + fmt(g) + " gold and " + fmt(x) + " xp while away.", "#ffc94a"), 400);
+    setTimeout(() => say("Welcome back! Your party earned " + fmt(g) + " gold and " + fmt(x) + " xp while away.", "#ffc94a"), 400);
   }
   renderPanel(); requestAnimationFrame(frame);
 })();
-window.__dbg = {S, get hero() { return hero; }, get mons() { return mons; }, get ST() { return ST; }, get cls() { return curCls; }, makeItem, pickup, autoEquip, recalc, get smith() { return smith; }};
+window.__dbg = {S, get heroes() { return heroes; }, get mons() { return mons; }, get camp() { return camp; }, get smith() { return smith; }, makeItem, pickup, autoEquip, recruit, genCandidate, upgradeItem, rollRarity, floorScale, genFloor};
 </script>
 </body>
 </html>
